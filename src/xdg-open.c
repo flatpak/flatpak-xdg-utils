@@ -21,6 +21,10 @@
 #include <gio/gio.h>
 
 #include <glib/gi18n.h>
+#include <gio/gunixfdlist.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <errno.h>
 
 #define PORTAL_BUS_NAME    "org.freedesktop.portal.Desktop"
 #define PORTAL_OBJECT_PATH "/org/freedesktop/portal/desktop"
@@ -45,6 +49,7 @@ main (int argc, char *argv[])
   GError *error = NULL;
   GDBusConnection *connection;
   GVariantBuilder opt_builder;
+  GFile *file;
 
   context = g_option_context_new ("{ file | URL }");
 
@@ -92,19 +97,59 @@ main (int argc, char *argv[])
 
   g_variant_builder_init (&opt_builder, G_VARIANT_TYPE_VARDICT);
 
-  g_dbus_connection_call_sync (connection,
-                               PORTAL_BUS_NAME,
-                               PORTAL_OBJECT_PATH,
-                               PORTAL_IFACE_NAME,
-                               "OpenURI",
-                               g_variant_new ("(ss@a{sv})",
-                                              "", *uris,
-                                              g_variant_builder_end (&opt_builder)),
-                               NULL,
-                               G_DBUS_CALL_FLAGS_NONE,
-                               -1,
-                               NULL,
-                               &error);
+  file = g_file_new_for_commandline_arg (uris[0]);
+  if (g_file_is_native (file))
+    {
+      char *path;
+      int fd;
+      GUnixFDList *fd_list;
+
+      path = g_file_get_path (file);
+      fd = open (path, O_PATH | O_CLOEXEC);
+      if (fd == -1)
+        {
+          g_printerr ("Failed to open '%s': %s", path, g_strerror (errno));
+          return 5;
+        }
+
+      fd_list = g_unix_fd_list_new_from_array (&fd, 1);
+      fd = -1;
+
+      g_dbus_connection_call_with_unix_fd_list_sync (connection,
+                                                     PORTAL_BUS_NAME,
+                                                     PORTAL_OBJECT_PATH,
+                                                     PORTAL_IFACE_NAME,
+                                                     "OpenFile",
+                                                     g_variant_new ("(sh@a{sv})",
+                                                                    "", 0,
+                                                                    g_variant_builder_end (&opt_builder)),
+                                                     NULL,
+                                                     G_DBUS_CALL_FLAGS_NONE,
+                                                     -1,
+                                                     fd_list,
+                                                     NULL,
+                                                     NULL,
+                                                     &error);
+
+      g_object_unref (fd_list);
+      g_free (path);
+    }
+  else
+    {
+      g_dbus_connection_call_sync (connection,
+                                   PORTAL_BUS_NAME,
+                                   PORTAL_OBJECT_PATH,
+                                   PORTAL_IFACE_NAME,
+                                   "OpenURI",
+                                   g_variant_new ("(ss@a{sv})",
+                                                  "", uris[0],
+                                                  g_variant_builder_end (&opt_builder)),
+                                   NULL,
+                                   G_DBUS_CALL_FLAGS_NONE,
+                                   -1,
+                                   NULL,
+                                   &error);
+    }
 
   if (error)
     {
@@ -117,6 +162,7 @@ main (int argc, char *argv[])
     }
 
   g_object_unref (connection);
+  g_object_unref (file);
 
   return 0;
 }
