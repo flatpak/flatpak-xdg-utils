@@ -21,6 +21,11 @@
 #include <gio/gio.h>
 
 #include <glib/gi18n.h>
+#include <gio/gunixfdlist.h>
+
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <errno.h>
 
 #define PORTAL_BUS_NAME    "org.freedesktop.portal.Desktop"
 #define PORTAL_OBJECT_PATH "/org/freedesktop/portal/desktop"
@@ -80,6 +85,8 @@ main (int argc, char *argv[])
   GError *error = NULL;
   GDBusConnection *connection;
   GVariantBuilder opt_builder;
+  GVariant *parameters;
+  GUnixFDList *fd_list = NULL;
 
   context = g_option_context_new ("[ mailto-uri | address(es) ]");
 
@@ -142,23 +149,51 @@ main (int argc, char *argv[])
                            "body", g_variant_new_string (body));
 
   if (attach != NULL)
-    g_variant_builder_add (&opt_builder,
-                           "{sv}",
-                           "attachments", g_variant_new_parsed ("[%s]", attach));
+    {
+      GFile *file = g_file_new_for_commandline_arg (attach);
+      char *path;
+      int fd;
 
-  g_dbus_connection_call_sync (connection,
-                               PORTAL_BUS_NAME,
-                               PORTAL_OBJECT_PATH,
-                               PORTAL_IFACE_NAME,
-                               "ComposeEmail",
-                               g_variant_new ("(s@a{sv})",
-                                              "",
-                                              g_variant_builder_end (&opt_builder)),
-                               NULL,
-                               G_DBUS_CALL_FLAGS_NONE,
-                               -1,
-                               NULL,
-                               &error);
+      if (!g_file_is_native (file))
+        {
+          g_printerr ("Only native files can be used as attachments");
+          g_object_unref (file);
+          return 2;
+        }
+
+      path = g_file_get_path (file);
+      fd = open (path, O_PATH | O_CLOEXEC);
+      if (fd == -1)
+        {
+          g_printerr ("Failed to open '%s': %s", path, g_strerror (errno));
+          return 2;
+        }
+
+      fd_list = g_unix_fd_list_new_from_array (&fd, 1);
+      fd = -1;
+
+      g_variant_builder_add (&opt_builder,
+                             "{sv}",
+                             "attachments", g_variant_new_parsed ("[0]"));
+    }
+
+  parameters = g_variant_new ("(s@a{sv})",
+                              "",
+                              g_variant_builder_end (&opt_builder));
+
+  g_dbus_connection_call_with_unix_fd_list_sync (connection,
+                                                 PORTAL_BUS_NAME,
+                                                 PORTAL_OBJECT_PATH,
+                                                 PORTAL_IFACE_NAME,
+                                                 "ComposeEmail",
+                                                 parameters,
+                                                 NULL,
+                                                 G_DBUS_CALL_FLAGS_NONE,
+                                                 -1,
+                                                 fd_list,
+                                                 NULL,
+                                                 NULL,
+                                                 &error);
 
   if (error)
     {
