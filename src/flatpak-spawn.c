@@ -32,9 +32,18 @@ typedef enum {
   FLATPAK_SPAWN_FLAGS_NO_NETWORK = 1 << 3,
 } FlatpakSpawnFlags;
 
+typedef enum {
+  FLATPAK_HOST_COMMAND_FLAGS_CLEAR_ENV = 1 << 0,
+} FlatpakHostCommandFlags;
+
 static GDBusConnection *session_bus = NULL;
 
 guint child_pid = 0;
+gboolean opt_host;
+
+const char *service_iface;
+const char *service_obj_path;
+const char *service_bus_name;
 
 static void
 spawn_exited_cb (GDBusConnection *connection,
@@ -90,10 +99,10 @@ forward_signal_idle_cb (gpointer user_data)
     to_process_group = TRUE;
 
   reply = g_dbus_connection_call_sync (session_bus,
-                                       "org.freedesktop.portal.Flatpak",
-                                       "/org/freedesktop/portal/Flatpak",
-                                       "org.freedesktop.portal.Flatpak",
-                                       "SpawnSignal",
+                                       service_bus_name,
+                                       service_obj_path,
+                                       service_iface,
+                                       opt_host ? "HostCommandSignal" : "SpawnSignal",
                                        g_variant_new ("(uub)",
                                                       child_pid, sig, to_process_group),
                                        G_VARIANT_TYPE ("()"),
@@ -137,11 +146,10 @@ name_owner_changed (GDBusConnection *connection,
                     gpointer         user_data)
 {
   const char *name, *from, *to;
-
   g_variant_get (parameters, "(sss)", &name, &from, &to);
 
-  /* Check if the portal dies, then we exit, because we can't track it anymore */
-  if (strcmp (name, "org.freedesktop.portal.Flatpak") == 0 &&
+  /* Check if the service dies, then we exit, because we can't track it anymore */
+  if (strcmp (name, service_bus_name) == 0 &&
       strcmp (to, "") == 0)
     {
       g_debug ("portal exited");
@@ -178,6 +186,7 @@ main (int    argc,
     { "no-network", 0, 0, G_OPTION_ARG_NONE, &opt_no_network,  "Run without network access.", NULL },
     { "sandbox-expose", 0, 0, G_OPTION_ARG_STRING_ARRAY, &opt_sandbox_expose, "Expose access to named sandbox", "NAME" },
     { "sandbox-expose-ro", 0, 0, G_OPTION_ARG_STRING_ARRAY, &opt_sandbox_expose_ro, "Expose readonly access to named sandbox", "NAME" },
+    { "host", 0, 0, G_OPTION_ARG_NONE, &opt_host, "Start the command on the host (requires access to org.freedesktop.Flatpak)", NULL },
     { NULL }
   };
 
@@ -234,11 +243,24 @@ main (int    argc,
       return 1;
     }
 
+  if (opt_host)
+    {
+      service_iface = "org.freedesktop.Flatpak.Development";
+      service_obj_path = "/org/freedesktop/Flatpak/Development";
+      service_bus_name = "org.freedesktop.Flatpak";
+    }
+  else
+    {
+      service_iface = "org.freedesktop.portal.Flatpak";
+      service_obj_path = "/org/freedesktop/portal/Flatpak";
+      service_bus_name = "org.freedesktop.portal.Flatpak";
+    }
+
   g_dbus_connection_signal_subscribe (session_bus,
                                       NULL,
-                                      "org.freedesktop.portal.Flatpak",
-                                      "SpawnExited",
-                                      "/org/freedesktop/portal/Flatpak",
+                                      service_iface,
+                                      opt_host ? "HostCommandExited" : "SpawnExited",
+                                      service_obj_path,
                                       NULL,
                                       G_DBUS_SIGNAL_FLAGS_NONE,
                                       spawn_exited_cb,
@@ -301,26 +323,61 @@ main (int    argc,
   spawn_flags = 0;
 
   if (opt_clear_env)
-    spawn_flags |= FLATPAK_SPAWN_FLAGS_CLEAR_ENV;
+    spawn_flags |= opt_host ? FLATPAK_HOST_COMMAND_FLAGS_CLEAR_ENV : FLATPAK_SPAWN_FLAGS_CLEAR_ENV;
 
   if (opt_latest_version)
-    spawn_flags |= FLATPAK_SPAWN_FLAGS_LATEST_VERSION;
+    {
+      if (opt_host)
+        {
+          g_printerr ("--host not compatible with --latest-version");
+          return 1;
+        }
+      spawn_flags |= FLATPAK_SPAWN_FLAGS_LATEST_VERSION;
+    }
 
   if (opt_sandbox)
-    spawn_flags |= FLATPAK_SPAWN_FLAGS_SANDBOX;
+    {
+      if (opt_host)
+        {
+          g_printerr ("--host not compatible with --sandbox");
+          return 1;
+        }
+      spawn_flags |= FLATPAK_SPAWN_FLAGS_SANDBOX;
+    }
 
   if (opt_no_network)
-    spawn_flags |= FLATPAK_SPAWN_FLAGS_NO_NETWORK;
+    {
+      if (opt_host)
+        {
+          g_printerr ("--host not compatible with --no-network");
+          return 1;
+        }
+      spawn_flags |= FLATPAK_SPAWN_FLAGS_NO_NETWORK;
+    }
 
   g_variant_builder_init (&options_builder, G_VARIANT_TYPE ("a{sv}"));
 
   if (opt_sandbox_expose)
-    g_variant_builder_add (&options_builder, "{s@v}", "sandbox-expose",
-                           g_variant_new_variant (g_variant_new_strv ((const char * const *)opt_sandbox_expose, -1)));
+    {
+      if (opt_host)
+        {
+          g_printerr ("--host not compatible with --sandbox-expose");
+          return 1;
+        }
+      g_variant_builder_add (&options_builder, "{s@v}", "sandbox-expose",
+                             g_variant_new_variant (g_variant_new_strv ((const char * const *)opt_sandbox_expose, -1)));
+    }
 
   if (opt_sandbox_expose_ro)
-    g_variant_builder_add (&options_builder, "{s@v}", "sandbox-expose-ro",
-                           g_variant_new_variant (g_variant_new_strv ((const char * const *)opt_sandbox_expose_ro, -1)));
+    {
+      if (opt_host)
+        {
+          g_printerr ("--host not compatible with --sandbox-expose-ro");
+          return 1;
+        }
+      g_variant_builder_add (&options_builder, "{s@v}", "sandbox-expose-ro",
+                             g_variant_new_variant (g_variant_new_strv ((const char * const *)opt_sandbox_expose_ro, -1)));
+    }
 
   g_dbus_connection_signal_subscribe (session_bus,
                                       "org.freedesktop.DBus",
@@ -333,10 +390,18 @@ main (int    argc,
                                       NULL, NULL);
 
   reply = g_dbus_connection_call_with_unix_fd_list_sync (session_bus,
-                                                         "org.freedesktop.portal.Flatpak",
-                                                         "/org/freedesktop/portal/Flatpak",
-                                                         "org.freedesktop.portal.Flatpak",
-                                                         "Spawn",
+                                                         service_bus_name,
+                                                         service_obj_path,
+                                                         service_iface,
+                                                         opt_host ? "HostCommand" : "Spawn",
+                                                         opt_host ?
+                                                         g_variant_new ("(^ay^aay@a{uh}@a{ss}u)",
+                                                                        "",
+                                                                        (const char * const *) child_argv->pdata,
+                                                                        g_variant_builder_end (g_steal_pointer (&fd_builder)),
+                                                                        g_variant_builder_end (g_steal_pointer (&env_builder)),
+                                                                        spawn_flags)
+                                                         :
                                                          g_variant_new ("(^ay^aay@a{uh}@a{ss}u@a{sv})",
                                                                         "",
                                                                         (const char * const *) child_argv->pdata,
