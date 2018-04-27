@@ -176,6 +176,7 @@ main (int    argc,
   gboolean opt_no_network = FALSE;
   char **opt_sandbox_expose = NULL;
   char **opt_sandbox_expose_ro = NULL;
+  g_autofree char *cwd = NULL;
   GVariantBuilder options_builder;
   const GOptionEntry options[] = {
     { "verbose", 'v', 0, G_OPTION_ARG_NONE, &verbose,  "Enable debug output.", NULL },
@@ -198,6 +199,8 @@ main (int    argc,
   g_set_prgname (argv[0]);
 
   child_argv = g_ptr_array_new ();
+
+  cwd = g_get_current_dir ();
 
   i = 1;
   while (i < argc && argv[i][0] == '-')
@@ -410,14 +413,14 @@ main (int    argc,
                                                          opt_host ? "HostCommand" : "Spawn",
                                                          opt_host ?
                                                          g_variant_new ("(^ay^aay@a{uh}@a{ss}u)",
-                                                                        "",
+                                                                        cwd,
                                                                         (const char * const *) child_argv->pdata,
                                                                         g_variant_builder_end (g_steal_pointer (&fd_builder)),
                                                                         g_variant_builder_end (g_steal_pointer (&env_builder)),
                                                                         spawn_flags)
                                                          :
                                                          g_variant_new ("(^ay^aay@a{uh}@a{ss}u@a{sv})",
-                                                                        "",
+                                                                        cwd,
                                                                         (const char * const *) child_argv->pdata,
                                                                         g_variant_builder_end (g_steal_pointer (&fd_builder)),
                                                                         g_variant_builder_end (g_steal_pointer (&env_builder)),
