@@ -157,7 +157,6 @@ name_owner_changed (GDBusConnection *connection,
     }
 }
 
-
 int
 main (int    argc,
       char **argv)
@@ -169,6 +168,7 @@ main (int    argc,
   int i, opt_argc;
   gboolean verbose = FALSE;
   char **forward_fds = NULL;
+  char **opt_envs = NULL;
   guint spawn_flags;
   gboolean opt_clear_env = FALSE;
   gboolean opt_latest_version = FALSE;
@@ -181,6 +181,7 @@ main (int    argc,
     { "verbose", 'v', 0, G_OPTION_ARG_NONE, &verbose,  "Enable debug output.", NULL },
     { "forward-fd", 0, 0, G_OPTION_ARG_STRING_ARRAY, &forward_fds,  "Forward file descriptor.", NULL },
     { "clear-env", 0, 0, G_OPTION_ARG_NONE, &opt_clear_env,  "Run with clean env.", NULL },
+    { "env", 0, 0, G_OPTION_ARG_STRING_ARRAY, &opt_envs, "Set environment variable", "VAR=VALUE" },
     { "latest-version", 0, 0, G_OPTION_ARG_NONE, &opt_latest_version,  "Run latest version.", NULL },
     { "sandbox", 0, 0, G_OPTION_ARG_NONE, &opt_sandbox,  "Run sandboxed.", NULL },
     { "no-network", 0, 0, G_OPTION_ARG_NONE, &opt_no_network,  "Run without network access.", NULL },
@@ -318,6 +319,19 @@ main (int    argc,
           return 1;
         }
       g_variant_builder_add (fd_builder, "{uh}", fd, handle);
+    }
+
+  for (i = 0; opt_envs != NULL && opt_envs[i] != NULL; i++)
+    {
+      const char *opt_env = opt_envs[i];
+      g_auto(GStrv) split = g_strsplit (opt_env, "=", 2);
+
+      if (split == NULL || split[0] == NULL || split[0][0] == 0 || split[1] == NULL)
+        {
+          g_printerr ("Invalid env format %s\n", opt_env);
+          return 1;
+        }
+      g_variant_builder_add (env_builder, "{ss}", split[0], split[1]);
     }
 
   spawn_flags = 0;
