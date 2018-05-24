@@ -157,6 +157,18 @@ name_owner_changed (GDBusConnection *connection,
     }
 }
 
+static gboolean
+command_specified (GPtrArray *child_argv,
+                   GError   **error)
+{
+  if (child_argv->len > 1)
+    return TRUE;
+
+  g_set_error (error, G_OPTION_ERROR, G_OPTION_ERROR_FAILED,
+               "No command specified");
+  return FALSE;
+}
+
 int
 main (int    argc,
       char **argv)
@@ -206,12 +218,6 @@ main (int    argc,
   while (i < argc && argv[i][0] == '-')
     i++;
 
-  if (i == argc)
-    {
-      g_printerr ("No command specified\n");
-      return 1;
-    }
-
   opt_argc = i;
 
   while (i < argc)
@@ -221,12 +227,13 @@ main (int    argc,
     }
   g_ptr_array_add (child_argv, NULL);
 
-  context = g_option_context_new ("");
+  context = g_option_context_new ("COMMAND [ARGUMENT…]");
 
   g_option_context_set_summary (context, "Flatpak portal spawn");
   g_option_context_add_main_entries (context, options, GETTEXT_PACKAGE);
 
-  if (!g_option_context_parse (context, &opt_argc, &argv, &error))
+  if (!g_option_context_parse (context, &opt_argc, &argv, &error) ||
+      !command_specified (child_argv, &error))
     {
       g_printerr ("%s: %s", g_get_application_name(), error->message);
       g_printerr ("\n");
