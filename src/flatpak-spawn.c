@@ -22,6 +22,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <sys/wait.h>
 #include <gio/gio.h>
 #include <gio/gunixfdlist.h>
 
@@ -64,7 +65,40 @@ spawn_exited_cb (GDBusConnection *connection,
   g_debug ("child exited %d: %d", client_pid, exit_status);
 
   if (child_pid == client_pid)
-    exit (exit_status);
+    {
+      int exit_code;
+
+      if (WIFEXITED (exit_status))
+        {
+          exit_code = WEXITSTATUS (exit_status);
+        }
+      else if (WIFSIGNALED (exit_status))
+        {
+          /* Smush the signal into an unsigned byte, as the shell does. This is
+           * not quite right from the perspective of whatever ran flatpak-spawn
+           * — it will get WIFEXITED() not WIFSIGNALED() — but the
+           *  alternative is to disconnect all signal() handlers then send this
+           *  signal to ourselves and hope it kills us.
+           */
+          exit_code = 128 + WTERMSIG (exit_status);
+        }
+      else
+        {
+          /* wait(3p) claims that if the waitpid() call that returned the exit
+           * code specified neither WUNTRACED nor WIFSIGNALED, then exactly one
+           * of WIFEXITED() or WIFSIGNALED() will be true.
+           */
+          g_warning ("exit status %d is neither WIFEXITED() nor WIFSIGNALED()",
+                     exit_status);
+          /* EX_SOFTWARE "internal software error" from sysexits.h, for want of
+           * a better code.
+           */
+          exit_status = 70;
+        }
+
+      g_debug ("child exit code %d: %d", client_pid, exit_code);
+      exit (exit_code);
+  }
 }
 
 static void
