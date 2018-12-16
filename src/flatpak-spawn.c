@@ -475,6 +475,7 @@ main (int    argc,
 
   if (reply == NULL)
     {
+      g_dbus_error_strip_remote_error (error);
       g_printerr ("Failed to call flatpak portal: %s\n", error->message);
       return 1;
     }
