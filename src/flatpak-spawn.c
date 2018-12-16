@@ -145,7 +145,7 @@ forward_signal_idle_cb (gpointer user_data)
 
   if (sig == SIGSTOP)
     {
-      g_debug ("SIGSTOP:ing flatpak-portal-spawn");
+      g_debug ("SIGSTOP:ing flatpak-spawn");
       raise (SIGSTOP);
     }
 
