@@ -225,16 +225,16 @@ main (int    argc,
   g_autofree char *cwd = NULL;
   GVariantBuilder options_builder;
   const GOptionEntry options[] = {
-    { "verbose", 'v', 0, G_OPTION_ARG_NONE, &verbose,  "Enable debug output.", NULL },
-    { "forward-fd", 0, 0, G_OPTION_ARG_STRING_ARRAY, &forward_fds,  "Forward file descriptor.", NULL },
-    { "clear-env", 0, 0, G_OPTION_ARG_NONE, &opt_clear_env,  "Run with clean env.", NULL },
+    { "verbose", 'v', 0, G_OPTION_ARG_NONE, &verbose,  "Enable debug output", NULL },
+    { "forward-fd", 0, 0, G_OPTION_ARG_STRING_ARRAY, &forward_fds,  "Forward file descriptor", "FD" },
+    { "clear-env", 0, 0, G_OPTION_ARG_NONE, &opt_clear_env,  "Run with clean environment", NULL },
     { "env", 0, 0, G_OPTION_ARG_STRING_ARRAY, &opt_envs, "Set environment variable", "VAR=VALUE" },
-    { "latest-version", 0, 0, G_OPTION_ARG_NONE, &opt_latest_version,  "Run latest version.", NULL },
-    { "sandbox", 0, 0, G_OPTION_ARG_NONE, &opt_sandbox,  "Run sandboxed.", NULL },
-    { "no-network", 0, 0, G_OPTION_ARG_NONE, &opt_no_network,  "Run without network access.", NULL },
-    { "sandbox-expose", 0, 0, G_OPTION_ARG_STRING_ARRAY, &opt_sandbox_expose, "Expose access to named sandbox", "NAME" },
-    { "sandbox-expose-ro", 0, 0, G_OPTION_ARG_STRING_ARRAY, &opt_sandbox_expose_ro, "Expose readonly access to named sandbox", "NAME" },
-    { "host", 0, 0, G_OPTION_ARG_NONE, &opt_host, "Start the command on the host (requires access to org.freedesktop.Flatpak)", NULL },
+    { "latest-version", 0, 0, G_OPTION_ARG_NONE, &opt_latest_version,  "Run latest version", NULL },
+    { "sandbox", 0, 0, G_OPTION_ARG_NONE, &opt_sandbox,  "Run sandboxed", NULL },
+    { "no-network", 0, 0, G_OPTION_ARG_NONE, &opt_no_network,  "Run without network access", NULL },
+    { "sandbox-expose", 0, 0, G_OPTION_ARG_STRING_ARRAY, &opt_sandbox_expose, "Expose access to named file", "NAME" },
+    { "sandbox-expose-ro", 0, 0, G_OPTION_ARG_STRING_ARRAY, &opt_sandbox_expose_ro, "Expose readonly access to named file", "NAME" },
+    { "host", 0, 0, G_OPTION_ARG_NONE, &opt_host, "Start the command on the host", NULL },
     { NULL }
   };
 
@@ -263,7 +263,7 @@ main (int    argc,
 
   context = g_option_context_new ("COMMAND [ARGUMENT…]");
 
-  g_option_context_set_summary (context, "Flatpak portal spawn");
+  g_option_context_set_summary (context, "Run a command in a sandbox");
   g_option_context_add_main_entries (context, options, GETTEXT_PACKAGE);
 
   if (!g_option_context_parse (context, &opt_argc, &argv, &error) ||
