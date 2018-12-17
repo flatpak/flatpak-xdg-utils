@@ -145,7 +145,7 @@ forward_signal_idle_cb (gpointer user_data)
 
   if (sig == SIGSTOP)
     {
-      g_debug ("SIGSTOP:ing flatpak-portal-spawn");
+      g_debug ("SIGSTOP:ing flatpak-spawn");
       raise (SIGSTOP);
     }
 
@@ -263,7 +263,7 @@ main (int    argc,
 
   context = g_option_context_new ("COMMAND [ARGUMENT…]");
 
-  g_option_context_set_summary (context, "Flatpak portal spawn");
+  g_option_context_set_summary (context, "Run a command in a sandbox");
   g_option_context_add_main_entries (context, options, GETTEXT_PACKAGE);
 
   if (!g_option_context_parse (context, &opt_argc, &argv, &error) ||
