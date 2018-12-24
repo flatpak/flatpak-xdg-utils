@@ -207,6 +207,16 @@ command_specified (GPtrArray *child_argv,
   return FALSE;
 }
 
+static void
+session_bus_closed_cb (GDBusConnection *bus,
+                       gboolean remote_peer_vanished,
+                       GError *error,
+                       GMainLoop *loop)
+{
+  g_debug ("Session bus connection closed, quitting");
+  g_main_loop_quit (loop);
+}
+
 int
 main (int    argc,
       char **argv)
@@ -491,6 +501,9 @@ main (int    argc,
   forward_signals ();
 
   loop = g_main_loop_new (NULL, FALSE);
+
+  g_signal_connect (session_bus, "closed", G_CALLBACK (session_bus_closed_cb), loop);
+
   g_main_loop_run (loop);
 
   return 0;
