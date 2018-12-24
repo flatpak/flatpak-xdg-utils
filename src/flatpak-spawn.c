@@ -142,7 +142,7 @@ forward_signal_idle_cb (gpointer user_data)
                                                       child_pid, sig, to_process_group),
                                        G_VARIANT_TYPE ("()"),
                                        G_DBUS_CALL_FLAGS_NONE,
-                                       0, NULL, &error);
+                                       -1, NULL, &error);
 
   if (error)
     g_debug ("Failed to forward signal: %s", error->message);
