@@ -120,6 +120,7 @@ forward_signal_idle_cb (gpointer user_data)
   int sig = GPOINTER_TO_INT(user_data);
   g_autoptr(GVariant) reply = NULL;
   gboolean to_process_group = FALSE;
+  g_autoptr(GError) error = NULL;
 
   g_debug ("Forwarding signal: %d", sig);
 
@@ -141,7 +142,10 @@ forward_signal_idle_cb (gpointer user_data)
                                                       child_pid, sig, to_process_group),
                                        G_VARIANT_TYPE ("()"),
                                        G_DBUS_CALL_FLAGS_NONE,
-                                       0, NULL, NULL);
+                                       0, NULL, &error);
+
+  if (error)
+    g_debug ("Failed to forward signal: %s", error->message);
 
   if (sig == SIGSTOP)
     {
