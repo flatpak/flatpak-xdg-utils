@@ -31,10 +31,12 @@ typedef enum {
   FLATPAK_SPAWN_FLAGS_LATEST_VERSION = 1 << 1,
   FLATPAK_SPAWN_FLAGS_SANDBOX = 1 << 2,
   FLATPAK_SPAWN_FLAGS_NO_NETWORK = 1 << 3,
+  FLATPAK_SPAWN_FLAGS_WATCH_BUS = 1 << 4, /* Since 1.2 */
 } FlatpakSpawnFlags;
 
 typedef enum {
   FLATPAK_HOST_COMMAND_FLAGS_CLEAR_ENV = 1 << 0,
+  FLATPAK_HOST_COMMAND_FLAGS_WATCH_BUS = 1 << 1, /* Since 1.2 */
 } FlatpakHostCommandFlags;
 
 static GDBusConnection *session_bus = NULL;
@@ -231,6 +233,7 @@ main (int    argc,
   char **opt_envs = NULL;
   guint spawn_flags;
   gboolean opt_clear_env = FALSE;
+  gboolean opt_watch_bus = FALSE;
   gboolean opt_latest_version = FALSE;
   gboolean opt_sandbox = FALSE;
   gboolean opt_no_network = FALSE;
@@ -242,6 +245,7 @@ main (int    argc,
     { "verbose", 'v', 0, G_OPTION_ARG_NONE, &verbose,  "Enable debug output", NULL },
     { "forward-fd", 0, 0, G_OPTION_ARG_STRING_ARRAY, &forward_fds,  "Forward file descriptor", "FD" },
     { "clear-env", 0, 0, G_OPTION_ARG_NONE, &opt_clear_env,  "Run with clean environment", NULL },
+    { "watch-bus", 0, 0, G_OPTION_ARG_NONE, &opt_watch_bus,  "Make the spawned command exit if we do", NULL },
     { "env", 0, 0, G_OPTION_ARG_STRING_ARRAY, &opt_envs, "Set environment variable", "VAR=VALUE" },
     { "latest-version", 0, 0, G_OPTION_ARG_NONE, &opt_latest_version,  "Run latest version", NULL },
     { "sandbox", 0, 0, G_OPTION_ARG_NONE, &opt_sandbox,  "Run sandboxed", NULL },
@@ -397,6 +401,9 @@ main (int    argc,
   if (opt_clear_env)
     spawn_flags |= opt_host ? FLATPAK_HOST_COMMAND_FLAGS_CLEAR_ENV : FLATPAK_SPAWN_FLAGS_CLEAR_ENV;
 
+  if (opt_watch_bus)
+    spawn_flags |= opt_host ? FLATPAK_HOST_COMMAND_FLAGS_WATCH_BUS : FLATPAK_SPAWN_FLAGS_WATCH_BUS;
+
   if (opt_latest_version)
     {
       if (opt_host)
@@ -461,40 +468,64 @@ main (int    argc,
                                       name_owner_changed,
                                       NULL, NULL);
 
-  reply = g_dbus_connection_call_with_unix_fd_list_sync (session_bus,
-                                                         service_bus_name,
-                                                         service_obj_path,
-                                                         service_iface,
-                                                         opt_host ? "HostCommand" : "Spawn",
-                                                         opt_host ?
-                                                         g_variant_new ("(^ay^aay@a{uh}@a{ss}u)",
-                                                                        cwd,
-                                                                        (const char * const *) child_argv->pdata,
-                                                                        g_variant_builder_end (g_steal_pointer (&fd_builder)),
-                                                                        g_variant_builder_end (g_steal_pointer (&env_builder)),
-                                                                        spawn_flags)
-                                                         :
-                                                         g_variant_new ("(^ay^aay@a{uh}@a{ss}u@a{sv})",
-                                                                        cwd,
-                                                                        (const char * const *) child_argv->pdata,
-                                                                        g_variant_builder_end (g_steal_pointer (&fd_builder)),
-                                                                        g_variant_builder_end (g_steal_pointer (&env_builder)),
-                                                                        spawn_flags, g_variant_builder_end (&options_builder)),
-                                                         G_VARIANT_TYPE ("(u)"),
-                                                         G_DBUS_CALL_FLAGS_NONE,
-                                                         -1,
-                                                         fd_list,
-                                                         NULL,
-                                                         NULL, &error);
+  {
+    g_autoptr(GVariant) fds = NULL;
+    g_autoptr(GVariant) env = NULL;
+    g_autoptr(GVariant) opts = NULL;
 
-  if (reply == NULL)
-    {
-      g_dbus_error_strip_remote_error (error);
-      g_printerr ("Portal call failed: %s\n", error->message);
-      return 1;
-    }
+    fds = g_variant_ref_sink (g_variant_builder_end (g_steal_pointer (&fd_builder)));
+    env = g_variant_ref_sink (g_variant_builder_end (g_steal_pointer (&env_builder)));
+    opts = g_variant_ref_sink (g_variant_builder_end (&options_builder));
 
-  g_variant_get (reply, "(u)", &child_pid);
+retry:
+    reply = g_dbus_connection_call_with_unix_fd_list_sync (session_bus,
+                                                           service_bus_name,
+                                                           service_obj_path,
+                                                           service_iface,
+                                                           opt_host ? "HostCommand" : "Spawn",
+                                                           opt_host ?
+                                                           g_variant_new ("(^ay^aay@a{uh}@a{ss}u)",
+                                                                          cwd,
+                                                                          (const char * const *) child_argv->pdata,
+                                                                          fds,
+                                                                          env,
+                                                                          spawn_flags)
+                                                           :
+                                                           g_variant_new ("(^ay^aay@a{uh}@a{ss}u@a{sv})",
+                                                                          cwd,
+                                                                          (const char * const *) child_argv->pdata,
+                                                                          fds,
+                                                                          env,
+                                                                          spawn_flags,
+                                                                          opts),
+                                                           G_VARIANT_TYPE ("(u)"),
+                                                           G_DBUS_CALL_FLAGS_NONE,
+                                                           -1,
+                                                           fd_list,
+                                                           NULL,
+                                                           NULL, &error);
+
+    if (reply == NULL)
+      {
+        if (g_error_matches (error, G_DBUS_ERROR, G_DBUS_ERROR_INVALID_ARGS) &&
+            opt_watch_bus)
+          {
+            g_debug ("Got an invalid argument error; trying again without --watch-bus");
+
+            opt_watch_bus = FALSE;
+            spawn_flags &= opt_host ? ~FLATPAK_HOST_COMMAND_FLAGS_WATCH_BUS : ~FLATPAK_SPAWN_FLAGS_WATCH_BUS;
+            g_clear_error (&error);
+
+            goto retry;
+          }
+
+        g_dbus_error_strip_remote_error (error);
+        g_printerr ("Portal call failed: %s\n", error->message);
+        return 1;
+      }
+
+    g_variant_get (reply, "(u)", &child_pid);
+  }
 
   g_debug ("child_pid: %d", child_pid);
 
