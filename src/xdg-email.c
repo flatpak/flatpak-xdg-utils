@@ -43,7 +43,7 @@ static char *attach = NULL;
 static gboolean
 warn_ignored_parameter (const char  *option_name,
                         const char  *value,
-                        gpointer     data,
+                        G_GNUC_UNUSED gpointer     data,
                         GError     **error);
 
 static GOptionEntry entries[] = {
@@ -70,8 +70,8 @@ static GOptionEntry entries[] = {
 static gboolean
 warn_ignored_parameter (const char  *option_name,
                         const char  *value,
-                        gpointer     data,
-                        GError     **error)
+                        G_GNUC_UNUSED gpointer     data,
+                        G_GNUC_UNUSED GError     **error)
 {
   g_printerr ("Option %s is not supported, ignoring value \"%s\"\n",
               option_name, value);

@@ -49,13 +49,13 @@ const char *service_obj_path;
 const char *service_bus_name;
 
 static void
-spawn_exited_cb (GDBusConnection *connection,
-                 const gchar     *sender_name,
-                 const gchar     *object_path,
-                 const gchar     *interface_name,
-                 const gchar     *signal_name,
-                 GVariant        *parameters,
-                 gpointer         user_data)
+spawn_exited_cb (G_GNUC_UNUSED GDBusConnection *connection,
+                 G_GNUC_UNUSED const gchar     *sender_name,
+                 G_GNUC_UNUSED const gchar     *object_path,
+                 G_GNUC_UNUSED const gchar     *interface_name,
+                 G_GNUC_UNUSED const gchar     *signal_name,
+                 GVariant                      *parameters,
+                 G_GNUC_UNUSED gpointer         user_data)
 {
   guint32 client_pid = 0;
   guint32 exit_status = 0;
@@ -104,10 +104,10 @@ spawn_exited_cb (GDBusConnection *connection,
 }
 
 static void
-message_handler (const gchar   *log_domain,
-                 GLogLevelFlags log_level,
-                 const gchar   *message,
-                 gpointer       user_data)
+message_handler (G_GNUC_UNUSED const gchar   *log_domain,
+                 GLogLevelFlags               log_level,
+                 const gchar                 *message,
+                 G_GNUC_UNUSED gpointer       user_data)
 {
   /* Make this look like normal console output */
   if (log_level & G_LOG_LEVEL_DEBUG)
@@ -170,20 +170,20 @@ forward_signals (void)
   int forward[] = {
     SIGHUP, SIGINT, SIGQUIT, SIGTERM, SIGCONT, SIGTSTP, SIGUSR1, SIGUSR2
   };
-  int i;
+  guint i;
 
   for (i = 0; i < G_N_ELEMENTS(forward); i++)
     signal (forward[i], forward_signal_handler);
 }
 
 static void
-name_owner_changed (GDBusConnection *connection,
-                    const gchar     *sender_name,
-                    const gchar     *object_path,
-                    const gchar     *interface_name,
-                    const gchar     *signal_name,
-                    GVariant        *parameters,
-                    gpointer         user_data)
+name_owner_changed (G_GNUC_UNUSED GDBusConnection *connection,
+                    G_GNUC_UNUSED const gchar     *sender_name,
+                    G_GNUC_UNUSED const gchar     *object_path,
+                    G_GNUC_UNUSED const gchar     *interface_name,
+                    G_GNUC_UNUSED const gchar     *signal_name,
+                    GVariant                      *parameters,
+                    G_GNUC_UNUSED gpointer         user_data)
 {
   const char *name, *from, *to;
   g_variant_get (parameters, "(sss)", &name, &from, &to);
@@ -210,9 +210,9 @@ command_specified (GPtrArray *child_argv,
 }
 
 static void
-session_bus_closed_cb (GDBusConnection *bus,
-                       gboolean remote_peer_vanished,
-                       GError *error,
+session_bus_closed_cb (G_GNUC_UNUSED GDBusConnection *bus,
+                       G_GNUC_UNUSED gboolean remote_peer_vanished,
+                       G_GNUC_UNUSED GError *error,
                        GMainLoop *loop)
 {
   g_debug ("Session bus connection closed, quitting");
