@@ -68,7 +68,7 @@ spawn_exited_cb (G_GNUC_UNUSED GDBusConnection *connection,
 
   if (child_pid == client_pid)
     {
-      int exit_code;
+      int exit_code = 0;
 
       if (WIFEXITED (exit_status))
         {
