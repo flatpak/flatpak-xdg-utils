@@ -26,6 +26,8 @@
 #include <gio/gio.h>
 #include <gio/gunixfdlist.h>
 
+#include "backport-autoptr.h"
+
 typedef enum {
   FLATPAK_SPAWN_FLAGS_CLEAR_ENV = 1 << 0,
   FLATPAK_SPAWN_FLAGS_LATEST_VERSION = 1 << 1,

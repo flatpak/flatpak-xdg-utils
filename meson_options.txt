@@ -1,0 +1,4 @@
+option('installed_tests',
+       type : 'boolean',
+       value : false,
+       description : 'enable installed tests')
