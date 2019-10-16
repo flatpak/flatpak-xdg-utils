@@ -241,6 +241,7 @@ main (int    argc,
   gboolean opt_no_network = FALSE;
   char **opt_sandbox_expose = NULL;
   char **opt_sandbox_expose_ro = NULL;
+  char *opt_directory = NULL;
   g_autofree char *cwd = NULL;
   GVariantBuilder options_builder;
   const GOptionEntry options[] = {
@@ -255,6 +256,7 @@ main (int    argc,
     { "sandbox-expose", 0, 0, G_OPTION_ARG_STRING_ARRAY, &opt_sandbox_expose, "Expose access to named file", "NAME" },
     { "sandbox-expose-ro", 0, 0, G_OPTION_ARG_STRING_ARRAY, &opt_sandbox_expose_ro, "Expose readonly access to named file", "NAME" },
     { "host", 0, 0, G_OPTION_ARG_NONE, &opt_host, "Start the command on the host", NULL },
+    { "directory", 0, 0, G_OPTION_ARG_FILENAME, &opt_directory, "Working directory in which to run the command", "DIR" },
     { NULL }
   };
 
@@ -460,6 +462,11 @@ main (int    argc,
                              g_variant_new_variant (g_variant_new_strv ((const char * const *)opt_sandbox_expose_ro, -1)));
     }
 
+  if (!opt_directory)
+    {
+      opt_directory = cwd;
+    }
+
   g_dbus_connection_signal_subscribe (session_bus,
                                       "org.freedesktop.DBus",
                                       "org.freedesktop.DBus",
@@ -487,14 +494,14 @@ retry:
                                                            opt_host ? "HostCommand" : "Spawn",
                                                            opt_host ?
                                                            g_variant_new ("(^ay^aay@a{uh}@a{ss}u)",
-                                                                          cwd,
+                                                                          opt_directory,
                                                                           (const char * const *) child_argv->pdata,
                                                                           fds,
                                                                           env,
                                                                           spawn_flags)
                                                            :
                                                            g_variant_new ("(^ay^aay@a{uh}@a{ss}u@a{sv})",
-                                                                          cwd,
+                                                                          opt_directory,
                                                                           (const char * const *) child_argv->pdata,
                                                                           fds,
                                                                           env,
