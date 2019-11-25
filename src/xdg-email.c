@@ -64,7 +64,8 @@ static GOptionEntry entries[] = {
   { "manual", 0, G_OPTION_FLAG_HIDDEN, G_OPTION_ARG_NONE, &show_help, NULL, NULL },
   { "version", 0, 0, G_OPTION_ARG_NONE, &show_version, N_("Show program version"), NULL },
 
-  { G_OPTION_REMAINING, 0, 0, G_OPTION_ARG_FILENAME_ARRAY, &uris, NULL, NULL }
+  { G_OPTION_REMAINING, 0, 0, G_OPTION_ARG_FILENAME_ARRAY, &uris, NULL, NULL },
+  { NULL, 0, 0, 0, NULL, NULL, NULL }
 };
 
 static gboolean
