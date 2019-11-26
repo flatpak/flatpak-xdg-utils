@@ -31,7 +31,9 @@
 #define PORTAL_OBJECT_PATH "/org/freedesktop/portal/desktop"
 #define PORTAL_IFACE_NAME  "org.freedesktop.portal.Email"
 
-static char **uris = NULL;
+static char **addresses = NULL;
+static char **cc = NULL;
+static char **bcc = NULL;
 static gboolean show_help = FALSE;
 static gboolean show_version = FALSE;
 
@@ -40,18 +42,12 @@ static char *subject = NULL;
 static char *body = NULL;
 static char *attach = NULL;
 
-static gboolean
-warn_ignored_parameter (const char  *option_name,
-                        const char  *value,
-                        G_GNUC_UNUSED gpointer     data,
-                        GError     **error);
-
 static GOptionEntry entries[] = {
   {"utf8", 0, 0, G_OPTION_ARG_NONE, &use_utf8,
    N_("Indicates that all command line options are in utf8"), NULL },
-  { "cc", 0, 0, G_OPTION_ARG_CALLBACK, warn_ignored_parameter,
+  { "cc", 0, 0, G_OPTION_ARG_STRING_ARRAY, &cc,
     N_("Specify a recipient to be copied on the e-mail"), N_("address")},
-  { "bcc", 0, 0, G_OPTION_ARG_CALLBACK, warn_ignored_parameter,
+  { "bcc", 0, 0, G_OPTION_ARG_STRING_ARRAY, &bcc,
     N_("Specify a recipient to be blindly copied on the e-mail"), N_("address")},
   { "subject", 0, 0, G_OPTION_ARG_STRING, &subject,
     N_("Specify a subject for the e-mail"), N_("text")},
@@ -64,20 +60,9 @@ static GOptionEntry entries[] = {
   { "manual", 0, G_OPTION_FLAG_HIDDEN, G_OPTION_ARG_NONE, &show_help, NULL, NULL },
   { "version", 0, 0, G_OPTION_ARG_NONE, &show_version, N_("Show program version"), NULL },
 
-  { G_OPTION_REMAINING, 0, 0, G_OPTION_ARG_FILENAME_ARRAY, &uris, NULL, NULL },
+  { G_OPTION_REMAINING, 0, 0, G_OPTION_ARG_FILENAME_ARRAY, &addresses, NULL, NULL },
   { NULL, 0, 0, 0, NULL, NULL, NULL }
 };
-
-static gboolean
-warn_ignored_parameter (const char  *option_name,
-                        const char  *value,
-                        G_GNUC_UNUSED gpointer     data,
-                        G_GNUC_UNUSED GError     **error)
-{
-  g_printerr ("Option %s is not supported, ignoring value \"%s\"\n",
-              option_name, value);
-  return TRUE;
-}
 
 int
 main (int argc, char *argv[])
@@ -111,7 +96,7 @@ main (int argc, char *argv[])
       return 0;
     }
 
-  if (show_help || uris == NULL || g_strv_length (uris) > 1)
+  if (show_help || addresses == NULL)
     {
       char *help = g_option_context_get_help (context, TRUE, NULL);
       g_print ("%s\n", help);
@@ -137,7 +122,17 @@ main (int argc, char *argv[])
 
   g_variant_builder_add (&opt_builder,
                          "{sv}",
-                         "address", g_variant_new_string (*uris));
+                         "addresses", g_variant_new_strv ((const char * const *)addresses, -1));
+
+  if (cc != NULL)
+    g_variant_builder_add (&opt_builder,
+                           "{sv}",
+                           "cc", g_variant_new_strv ((const char * const *)cc, -1));
+
+  if (bcc != NULL)
+    g_variant_builder_add (&opt_builder,
+                           "{sv}",
+                           "bcc", g_variant_new_strv ((const char * const *)bcc, -1));
 
   if (subject != NULL)
     g_variant_builder_add (&opt_builder,
