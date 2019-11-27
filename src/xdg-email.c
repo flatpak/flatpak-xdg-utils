@@ -73,6 +73,9 @@ main (int argc, char *argv[])
   GVariantBuilder opt_builder;
   GVariant *parameters;
   GUnixFDList *fd_list = NULL;
+  g_autoptr(GVariant) ret = NULL;
+  g_autoptr(GVariant) v = NULL;
+  guint version;
 
   context = g_option_context_new ("[ mailto-uri | address(es) ]");
 
@@ -118,21 +121,44 @@ main (int argc, char *argv[])
       return 3;
     }
 
+  ret = g_dbus_connection_call_sync (connection,
+                                     PORTAL_BUS_NAME,
+                                     PORTAL_OBJECT_PATH,
+                                     "org.freedesktop.DBus.Properties",
+                                     "Get",
+                                     g_variant_new ("(ss)", "org.freedesktop.portal.Email", "version"),
+                                     G_VARIANT_TYPE ("(v)"),
+                                     0,
+                                     G_MAXINT,
+                                     NULL,
+                                     NULL);
+  g_variant_get (ret, "(v)", &v);
+  g_variant_get (v, "u", &version);
+
   g_variant_builder_init (&opt_builder, G_VARIANT_TYPE_VARDICT);
 
-  g_variant_builder_add (&opt_builder,
-                         "{sv}",
-                         "addresses", g_variant_new_strv ((const char * const *)addresses, -1));
+  if (version >= 3)
+    {
+      g_variant_builder_add (&opt_builder,
+                             "{sv}",
+                             "addresses", g_variant_new_strv ((const char * const *)addresses, -1));
 
-  if (cc != NULL)
-    g_variant_builder_add (&opt_builder,
-                           "{sv}",
-                           "cc", g_variant_new_strv ((const char * const *)cc, -1));
+      if (cc != NULL)
+        g_variant_builder_add (&opt_builder,
+                               "{sv}",
+                               "cc", g_variant_new_strv ((const char * const *)cc, -1));
 
-  if (bcc != NULL)
-    g_variant_builder_add (&opt_builder,
-                           "{sv}",
-                           "bcc", g_variant_new_strv ((const char * const *)bcc, -1));
+      if (bcc != NULL)
+        g_variant_builder_add (&opt_builder,
+                               "{sv}",
+                               "bcc", g_variant_new_strv ((const char * const *)bcc, -1));
+    }
+  else
+    {
+      g_variant_builder_add (&opt_builder,
+                             "{sv}",
+                             "address", g_variant_new_string (addresses[0]));
+    }
 
   if (subject != NULL)
     g_variant_builder_add (&opt_builder,
