@@ -688,9 +688,9 @@ main (int    argc,
 
           handle = g_unix_fd_list_append (fd_list, path_fd, &error);
           g_variant_builder_add (expose_fd_builder, "h", handle);
-          g_variant_builder_add (&options_builder, "{s@v}", "sandbox-expose-fd",
-                                 g_variant_new_variant (g_variant_builder_end (g_steal_pointer (&expose_fd_builder))));
         }
+      g_variant_builder_add (&options_builder, "{s@v}", "sandbox-expose-fd",
+                             g_variant_new_variant (g_variant_builder_end (g_steal_pointer (&expose_fd_builder))));
     }
 
   if (opt_sandbox_expose_path_ro)
@@ -717,9 +717,9 @@ main (int    argc,
 
           handle = g_unix_fd_list_append (fd_list, path_fd, &error);
           g_variant_builder_add (expose_fd_builder, "h", handle);
-          g_variant_builder_add (&options_builder, "{s@v}", "sandbox-expose-fd-ro",
-                                 g_variant_new_variant (g_variant_builder_end (g_steal_pointer (&expose_fd_builder))));
         }
+      g_variant_builder_add (&options_builder, "{s@v}", "sandbox-expose-fd-ro",
+                             g_variant_new_variant (g_variant_builder_end (g_steal_pointer (&expose_fd_builder))));
     }
 
   if (!opt_directory)
