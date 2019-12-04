@@ -18,10 +18,13 @@
  *       Alexander Larsson <alexl@redhat.com>
  */
 
+#include <fcntl.h>
 #include <locale.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdio.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 #include <sys/wait.h>
 #include <gio/gio.h>
 #include <gio/gunixfdlist.h>
@@ -34,12 +37,27 @@ typedef enum {
   FLATPAK_SPAWN_FLAGS_SANDBOX = 1 << 2,
   FLATPAK_SPAWN_FLAGS_NO_NETWORK = 1 << 3,
   FLATPAK_SPAWN_FLAGS_WATCH_BUS = 1 << 4, /* Since 1.2 */
+  FLATPAK_SPAWN_FLAGS_EXPOSE_PIDS = 1 << 5, /* Since 1.6, optional */
 } FlatpakSpawnFlags;
 
 typedef enum {
   FLATPAK_HOST_COMMAND_FLAGS_CLEAR_ENV = 1 << 0,
   FLATPAK_HOST_COMMAND_FLAGS_WATCH_BUS = 1 << 1, /* Since 1.2 */
 } FlatpakHostCommandFlags;
+
+/* Since 1.6 */
+typedef enum {
+  FLATPAK_SPAWN_SANDBOX_FLAGS_SHARE_DISPLAY = 1 << 0,
+  FLATPAK_SPAWN_SANDBOX_FLAGS_SHARE_SOUND = 1 << 1,
+  FLATPAK_SPAWN_SANDBOX_FLAGS_SHARE_GPU = 1 << 2,
+  FLATPAK_SPAWN_SANDBOX_FLAGS_ALLOW_DBUS = 1 << 3,
+  FLATPAK_SPAWN_SANDBOX_FLAGS_ALLOW_A11Y = 1 << 4,
+} FlatpakSpawnSandboxFlags;
+
+/* Since 1.6 */
+typedef enum {
+  FLATPAK_SPAWN_SUPPORT_FLAGS_EXPOSE_PIDS = 1 << 0,
+} FlatpakSpawnSupportFlags;
 
 static GDBusConnection *session_bus = NULL;
 
@@ -221,6 +239,155 @@ session_bus_closed_cb (G_GNUC_UNUSED GDBusConnection *bus,
   g_main_loop_quit (loop);
 }
 
+static gboolean opt_sandbox_flags = 0;
+
+static gboolean
+sandbox_flag_callback (G_GNUC_UNUSED const gchar *option_name,
+                       const gchar *value,
+                       G_GNUC_UNUSED gpointer data,
+                       GError **error)
+{
+  long val;
+  char *end;
+
+  if (strcmp (value, "share-display") == 0)
+    {
+      opt_sandbox_flags |= FLATPAK_SPAWN_SANDBOX_FLAGS_SHARE_DISPLAY;
+      return TRUE;
+    }
+
+  if (strcmp (value, "share-sound") == 0)
+    {
+      opt_sandbox_flags |= FLATPAK_SPAWN_SANDBOX_FLAGS_SHARE_SOUND;
+      return TRUE;
+    }
+
+  if (strcmp (value, "share-gpu") == 0)
+    {
+      opt_sandbox_flags |= FLATPAK_SPAWN_SANDBOX_FLAGS_SHARE_GPU;
+      return TRUE;
+    }
+
+  if (strcmp (value, "allow-dbus") == 0)
+    {
+      opt_sandbox_flags |= FLATPAK_SPAWN_SANDBOX_FLAGS_ALLOW_DBUS;
+      return TRUE;
+    }
+
+  if (strcmp (value, "allow-a11y") == 0)
+    {
+      opt_sandbox_flags |= FLATPAK_SPAWN_SANDBOX_FLAGS_ALLOW_A11Y;
+      return TRUE;
+    }
+
+  val = strtol (value, &end, 10);
+  if (val > 0 && *end == 0)
+    {
+      opt_sandbox_flags |= val;
+      return TRUE;
+    }
+
+  g_set_error (error, G_OPTION_ERROR, G_OPTION_ERROR_FAILED,
+               "Unknown sandbox flag %s", value);
+  return FALSE;
+}
+
+static guint32
+get_portal_version (void)
+{
+  static guint32 version = 0;
+
+  if (version == 0)
+    {
+      g_autoptr(GError) error = NULL;
+      g_autoptr(GVariant) reply =
+        g_dbus_connection_call_sync (session_bus,
+                                     service_bus_name,
+                                     service_obj_path,
+                                     "org.freedesktop.DBus.Properties",
+                                     "Get",
+                                     g_variant_new ("(ss)", service_iface, "version"),
+                                     G_VARIANT_TYPE ("(v)"),
+                                     G_DBUS_CALL_FLAGS_NONE,
+                                     -1,
+                                     NULL, &error);
+
+      if (reply == NULL)
+        g_debug ("Failed to get version: %s", error->message);
+      else
+        {
+          g_autoptr(GVariant) v = g_variant_get_child_value (reply, 0);
+          g_autoptr(GVariant) v2 = g_variant_get_variant (v);
+          version = g_variant_get_uint32 (v2);
+        }
+    }
+
+  return version;
+}
+
+static void
+check_portal_version (const char *option, guint32 version_needed)
+{
+  guint32 portal_version = get_portal_version ();
+  if (portal_version < version_needed)
+    {
+      g_printerr ("--%s not supported by host portal version (need version %d, has %d)\n", option, version_needed, portal_version);
+      exit (1);
+    }
+}
+
+static guint32
+get_portal_supports (void)
+{
+  static guint32 supports = 0;
+  static gboolean ran = FALSE;
+
+  if (!ran)
+    {
+      g_autoptr(GError) error = NULL;
+      g_autoptr(GVariant) reply = NULL;
+
+      ran = TRUE;
+
+      /* Support flags were added in version 3 */
+      if (get_portal_version () >= 3)
+        {
+          reply = g_dbus_connection_call_sync (session_bus,
+                                               service_bus_name,
+                                               service_obj_path,
+                                               "org.freedesktop.DBus.Properties",
+                                               "Get",
+                                               g_variant_new ("(ss)", service_iface, "supports"),
+                                               G_VARIANT_TYPE ("(v)"),
+                                               G_DBUS_CALL_FLAGS_NONE,
+                                               -1,
+                                               NULL, &error);
+          if (reply == NULL)
+            g_debug ("Failed to get supports: %s", error->message);
+          else
+            {
+              g_autoptr(GVariant) v = g_variant_get_child_value (reply, 0);
+              g_autoptr(GVariant) v2 = g_variant_get_variant (v);
+              supports = g_variant_get_uint32 (v2);
+            }
+        }
+    }
+
+  return supports;
+}
+
+static void
+check_portal_supports (const char *option, guint32 supports_needed)
+{
+  guint32 supports = get_portal_supports ();
+
+  if ((supports & supports_needed) != supports_needed)
+    {
+      g_printerr ("--%s not supported by host portal\n", option);
+      exit (1);
+    }
+}
+
 int
 main (int    argc,
       char **argv)
@@ -236,11 +403,14 @@ main (int    argc,
   guint spawn_flags;
   gboolean opt_clear_env = FALSE;
   gboolean opt_watch_bus = FALSE;
+  gboolean opt_expose_pids = FALSE;
   gboolean opt_latest_version = FALSE;
   gboolean opt_sandbox = FALSE;
   gboolean opt_no_network = FALSE;
   char **opt_sandbox_expose = NULL;
   char **opt_sandbox_expose_ro = NULL;
+  char **opt_sandbox_expose_path = NULL;
+  char **opt_sandbox_expose_path_ro = NULL;
   char *opt_directory = NULL;
   g_autofree char *cwd = NULL;
   GVariantBuilder options_builder;
@@ -249,12 +419,16 @@ main (int    argc,
     { "forward-fd", 0, 0, G_OPTION_ARG_STRING_ARRAY, &forward_fds,  "Forward file descriptor", "FD" },
     { "clear-env", 0, 0, G_OPTION_ARG_NONE, &opt_clear_env,  "Run with clean environment", NULL },
     { "watch-bus", 0, 0, G_OPTION_ARG_NONE, &opt_watch_bus,  "Make the spawned command exit if we do", NULL },
+    { "expose-pids", 0, 0, G_OPTION_ARG_NONE, &opt_expose_pids, "Expose sandbox pid in calling sandbox", NULL },
     { "env", 0, 0, G_OPTION_ARG_STRING_ARRAY, &opt_envs, "Set environment variable", "VAR=VALUE" },
     { "latest-version", 0, 0, G_OPTION_ARG_NONE, &opt_latest_version,  "Run latest version", NULL },
     { "sandbox", 0, 0, G_OPTION_ARG_NONE, &opt_sandbox,  "Run sandboxed", NULL },
     { "no-network", 0, 0, G_OPTION_ARG_NONE, &opt_no_network,  "Run without network access", NULL },
     { "sandbox-expose", 0, 0, G_OPTION_ARG_STRING_ARRAY, &opt_sandbox_expose, "Expose access to named file", "NAME" },
     { "sandbox-expose-ro", 0, 0, G_OPTION_ARG_STRING_ARRAY, &opt_sandbox_expose_ro, "Expose readonly access to named file", "NAME" },
+    { "sandbox-expose-path", 0, 0, G_OPTION_ARG_FILENAME_ARRAY, &opt_sandbox_expose_path, "Expose access to path", "PATH" },
+    { "sandbox-expose-path-ro", 0, 0, G_OPTION_ARG_FILENAME_ARRAY, &opt_sandbox_expose_path_ro, "Expose readonly access to path", "PATH" },
+    { "sandbox-flag", 0, 0, G_OPTION_ARG_CALLBACK, sandbox_flag_callback, "Enable sandbox flag", "FLAG" },
     { "host", 0, 0, G_OPTION_ARG_NONE, &opt_host, "Start the command on the host", NULL },
     { "directory", 0, 0, G_OPTION_ARG_FILENAME, &opt_directory, "Working directory in which to run the command", "DIR" },
     { NULL }
@@ -408,6 +582,20 @@ main (int    argc,
   if (opt_watch_bus)
     spawn_flags |= opt_host ? FLATPAK_HOST_COMMAND_FLAGS_WATCH_BUS : FLATPAK_SPAWN_FLAGS_WATCH_BUS;
 
+  if (opt_expose_pids)
+    {
+      if (opt_host)
+        {
+          g_printerr ("--host not compatible with --expose-pids");
+          return 1;
+        }
+
+      check_portal_version ("expose-pids", 3);
+      check_portal_supports ("expose-pids", FLATPAK_SPAWN_SUPPORT_FLAGS_EXPOSE_PIDS);
+
+      spawn_flags |= FLATPAK_SPAWN_FLAGS_EXPOSE_PIDS;
+    }
+
   if (opt_latest_version)
     {
       if (opt_host)
@@ -460,6 +648,78 @@ main (int    argc,
         }
       g_variant_builder_add (&options_builder, "{s@v}", "sandbox-expose-ro",
                              g_variant_new_variant (g_variant_new_strv ((const char * const *)opt_sandbox_expose_ro, -1)));
+    }
+
+  if (opt_sandbox_flags)
+    {
+      if (opt_host)
+        {
+          g_printerr ("--host not compatible with --sandbox-flag\n");
+          return 1;
+        }
+
+      check_portal_version ("sandbox-flags", 3);
+
+      g_variant_builder_add (&options_builder, "{s@v}", "sandbox-flags",
+                             g_variant_new_variant (g_variant_new_uint32 (opt_sandbox_flags)));
+    }
+
+  if (opt_sandbox_expose_path)
+    {
+      g_autoptr(GVariantBuilder) expose_fd_builder = g_variant_builder_new (G_VARIANT_TYPE ("ah"));
+
+      if (opt_host)
+        {
+          g_printerr ("--host not compatible with --sandbox-expose-path\n");
+          return 1;
+        }
+
+      check_portal_version ("sandbox-expose-path", 3);
+
+      for (i = 0; opt_sandbox_expose_path[i] != NULL; i++)
+        {
+          gint handle = -1;
+          int path_fd = open (opt_sandbox_expose_path[i], O_PATH|O_CLOEXEC|O_NOFOLLOW|O_RDONLY);
+          if (path_fd == -1)
+            {
+              g_printerr ("Failed to open %s for --sandbox-expose-path\n", opt_sandbox_expose_path[i]);
+              return 1;
+            }
+
+          handle = g_unix_fd_list_append (fd_list, path_fd, &error);
+          g_variant_builder_add (expose_fd_builder, "h", handle);
+        }
+      g_variant_builder_add (&options_builder, "{s@v}", "sandbox-expose-fd",
+                             g_variant_new_variant (g_variant_builder_end (g_steal_pointer (&expose_fd_builder))));
+    }
+
+  if (opt_sandbox_expose_path_ro)
+    {
+      g_autoptr(GVariantBuilder) expose_fd_builder = g_variant_builder_new (G_VARIANT_TYPE ("ah"));
+
+      if (opt_host)
+        {
+          g_printerr ("--host not compatible with --sandbox-expose-path-ro\n");
+          return 1;
+        }
+
+      check_portal_version ("sandbox-expose-path-ro", 3);
+
+      for (i = 0; opt_sandbox_expose_path_ro[i] != NULL; i++)
+        {
+          gint handle = -1;
+          int path_fd = open (opt_sandbox_expose_path_ro[i], O_PATH|O_CLOEXEC|O_NOFOLLOW|O_RDONLY);
+          if (path_fd == -1)
+            {
+              g_printerr ("Failed to open %s for --sandbox-expose-path-ro\n", opt_sandbox_expose_path_ro[i]);
+              return 1;
+            }
+
+          handle = g_unix_fd_list_append (fd_list, path_fd, &error);
+          g_variant_builder_add (expose_fd_builder, "h", handle);
+        }
+      g_variant_builder_add (&options_builder, "{s@v}", "sandbox-expose-fd-ro",
+                             g_variant_new_variant (g_variant_builder_end (g_steal_pointer (&expose_fd_builder))));
     }
 
   if (!opt_directory)
