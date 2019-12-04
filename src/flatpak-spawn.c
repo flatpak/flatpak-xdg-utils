@@ -276,7 +276,7 @@ sandbox_flag_callback (G_GNUC_UNUSED const gchar *option_name,
 
   if (strcmp (value, "allow-a11y") == 0)
     {
-      opt_sandbox_flags |= FLATPAK_SPAWN_SANDBOX_FLAGS_ALLOW_DBUS;
+      opt_sandbox_flags |= FLATPAK_SPAWN_SANDBOX_FLAGS_ALLOW_A11Y;
       return TRUE;
     }
 
