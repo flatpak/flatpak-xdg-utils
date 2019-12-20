@@ -388,6 +388,42 @@ check_portal_supports (const char *option, guint32 supports_needed)
     }
 }
 
+static gboolean
+add_paths_to_variant (GVariantBuilder *builder, GUnixFDList *fd_list, const GStrv paths, gboolean ignore_errors)
+{
+  g_autoptr(GError) error = NULL;
+
+  if (!paths)
+    return TRUE;
+
+  for (gsize i = 0; paths[i] != NULL; i++)
+    {
+      gint handle = -1;
+      int path_fd = open (paths[i], O_PATH|O_CLOEXEC|O_NOFOLLOW|O_RDONLY);
+      if (path_fd == -1)
+        {
+          if (ignore_errors)
+            continue;
+
+          g_printerr ("Failed to open %s to expose in sandbox\n", paths[i]);
+          return FALSE;
+        }
+
+      handle = g_unix_fd_list_append (fd_list, path_fd, &error);
+      if (handle == -1)
+        {
+          if (ignore_errors)
+            continue;
+
+          g_printerr ("Failed to add fd to list for %s: %s\n", paths[i], error->message);
+          return FALSE;
+        }
+      g_variant_builder_add (builder, "h", handle);
+    }
+
+  return TRUE;
+}
+
 int
 main (int    argc,
       char **argv)
@@ -411,6 +447,8 @@ main (int    argc,
   char **opt_sandbox_expose_ro = NULL;
   char **opt_sandbox_expose_path = NULL;
   char **opt_sandbox_expose_path_ro = NULL;
+  char **opt_sandbox_expose_path_try = NULL;
+  char **opt_sandbox_expose_path_ro_try = NULL;
   char *opt_directory = NULL;
   g_autofree char *cwd = NULL;
   GVariantBuilder options_builder;
@@ -428,6 +466,8 @@ main (int    argc,
     { "sandbox-expose-ro", 0, 0, G_OPTION_ARG_STRING_ARRAY, &opt_sandbox_expose_ro, "Expose readonly access to named file", "NAME" },
     { "sandbox-expose-path", 0, 0, G_OPTION_ARG_FILENAME_ARRAY, &opt_sandbox_expose_path, "Expose access to path", "PATH" },
     { "sandbox-expose-path-ro", 0, 0, G_OPTION_ARG_FILENAME_ARRAY, &opt_sandbox_expose_path_ro, "Expose readonly access to path", "PATH" },
+    { "sandbox-expose-path-try", 0, 0, G_OPTION_ARG_FILENAME_ARRAY, &opt_sandbox_expose_path_try, "Expose access to path if it exists", "PATH" },
+    { "sandbox-expose-path-ro-try", 0, 0, G_OPTION_ARG_FILENAME_ARRAY, &opt_sandbox_expose_path_ro_try, "Expose readonly access to path if it exists", "PATH" },
     { "sandbox-flag", 0, 0, G_OPTION_ARG_CALLBACK, sandbox_flag_callback, "Enable sandbox flag", "FLAG" },
     { "host", 0, 0, G_OPTION_ARG_NONE, &opt_host, "Start the command on the host", NULL },
     { "directory", 0, 0, G_OPTION_ARG_FILENAME, &opt_directory, "Working directory in which to run the command", "DIR" },
@@ -664,7 +704,7 @@ main (int    argc,
                              g_variant_new_variant (g_variant_new_uint32 (opt_sandbox_flags)));
     }
 
-  if (opt_sandbox_expose_path)
+  if (opt_sandbox_expose_path || opt_sandbox_expose_path_try)
     {
       g_autoptr(GVariantBuilder) expose_fd_builder = g_variant_builder_new (G_VARIANT_TYPE ("ah"));
 
@@ -676,24 +716,15 @@ main (int    argc,
 
       check_portal_version ("sandbox-expose-path", 3);
 
-      for (i = 0; opt_sandbox_expose_path[i] != NULL; i++)
-        {
-          gint handle = -1;
-          int path_fd = open (opt_sandbox_expose_path[i], O_PATH|O_CLOEXEC|O_NOFOLLOW|O_RDONLY);
-          if (path_fd == -1)
-            {
-              g_printerr ("Failed to open %s for --sandbox-expose-path\n", opt_sandbox_expose_path[i]);
-              return 1;
-            }
+      if (!add_paths_to_variant (expose_fd_builder, fd_list, opt_sandbox_expose_path, FALSE)
+          || !add_paths_to_variant (expose_fd_builder, fd_list, opt_sandbox_expose_path_try, TRUE))
+        return 1;
 
-          handle = g_unix_fd_list_append (fd_list, path_fd, &error);
-          g_variant_builder_add (expose_fd_builder, "h", handle);
-        }
       g_variant_builder_add (&options_builder, "{s@v}", "sandbox-expose-fd",
                              g_variant_new_variant (g_variant_builder_end (g_steal_pointer (&expose_fd_builder))));
     }
 
-  if (opt_sandbox_expose_path_ro)
+  if (opt_sandbox_expose_path_ro || opt_sandbox_expose_path_ro_try)
     {
       g_autoptr(GVariantBuilder) expose_fd_builder = g_variant_builder_new (G_VARIANT_TYPE ("ah"));
 
@@ -705,19 +736,10 @@ main (int    argc,
 
       check_portal_version ("sandbox-expose-path-ro", 3);
 
-      for (i = 0; opt_sandbox_expose_path_ro[i] != NULL; i++)
-        {
-          gint handle = -1;
-          int path_fd = open (opt_sandbox_expose_path_ro[i], O_PATH|O_CLOEXEC|O_NOFOLLOW|O_RDONLY);
-          if (path_fd == -1)
-            {
-              g_printerr ("Failed to open %s for --sandbox-expose-path-ro\n", opt_sandbox_expose_path_ro[i]);
-              return 1;
-            }
+      if (!add_paths_to_variant (expose_fd_builder, fd_list, opt_sandbox_expose_path_ro, FALSE)
+          || !add_paths_to_variant (expose_fd_builder, fd_list, opt_sandbox_expose_path_ro_try, TRUE))
+        return 1;
 
-          handle = g_unix_fd_list_append (fd_list, path_fd, &error);
-          g_variant_builder_add (expose_fd_builder, "h", handle);
-        }
       g_variant_builder_add (&options_builder, "{s@v}", "sandbox-expose-fd-ro",
                              g_variant_new_variant (g_variant_builder_end (g_steal_pointer (&expose_fd_builder))));
     }
