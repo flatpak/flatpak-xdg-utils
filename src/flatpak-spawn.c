@@ -23,13 +23,21 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/signalfd.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <glib-unix.h>
 #include <gio/gio.h>
 #include <gio/gunixfdlist.h>
 
 #include "backport-autoptr.h"
+
+/* Change to #if 1 to check backwards-compatibility code paths */
+#if 0
+#undef GLIB_CHECK_VERSION
+#define GLIB_CHECK_VERSION(x, y, z) (0)
+#endif
 
 typedef enum {
   FLATPAK_SPAWN_FLAGS_CLEAR_ENV = 1 << 0,
@@ -136,13 +144,36 @@ message_handler (G_GNUC_UNUSED const gchar   *log_domain,
     g_printerr ("%s: %s\n", g_get_prgname (), message);
 }
 
-static gboolean
-forward_signal_idle_cb (gpointer user_data)
+static void
+forward_signal (int sig)
 {
-  int sig = GPOINTER_TO_INT(user_data);
   g_autoptr(GVariant) reply = NULL;
   gboolean to_process_group = FALSE;
   g_autoptr(GError) error = NULL;
+
+  if (child_pid == 0)
+    {
+      /* We are not monitoring a child yet, so let the signal act on
+       * this main process instead */
+      if (sig == SIGTSTP || sig == SIGSTOP || sig == SIGTTIN || sig == SIGTTOU)
+        {
+          raise (SIGSTOP);
+        }
+      else if (sig != SIGCONT)
+        {
+          sigset_t mask;
+
+          sigemptyset (&mask);
+          sigaddset (&mask, sig);
+          /* Unblock it, so that it will be delivered properly this time.
+           * Use pthread_sigmask instead of sigprocmask because the latter
+           * has unspecified behaviour in a multi-threaded process. */
+          pthread_sigmask (SIG_UNBLOCK, &mask, NULL);
+          raise (sig);
+        }
+
+      return;
+    }
 
   g_debug ("Forwarding signal: %d", sig);
 
@@ -174,26 +205,97 @@ forward_signal_idle_cb (gpointer user_data)
       g_debug ("SIGSTOP:ing flatpak-spawn");
       raise (SIGSTOP);
     }
-
-  return G_SOURCE_REMOVE;
 }
 
-static void
-forward_signal_handler (int sig)
+static gboolean
+forward_signal_handler (
+#if GLIB_CHECK_VERSION (2, 36, 0)
+                        int sfd,
+#else
+                        GIOChannel *source,
+#endif
+                        G_GNUC_UNUSED GIOCondition condition,
+                        G_GNUC_UNUSED gpointer data)
 {
-  g_idle_add (forward_signal_idle_cb, GINT_TO_POINTER(sig));
+  struct signalfd_siginfo info;
+  ssize_t size;
+
+#if !GLIB_CHECK_VERSION (2, 36, 0)
+  int sfd;
+
+  sfd = g_io_channel_unix_get_fd (source);
+  g_return_val_if_fail (sfd >= 0, G_SOURCE_CONTINUE);
+#endif
+
+  size = read (sfd, &info, sizeof (info));
+
+  if (size < 0)
+    {
+      if (errno != EINTR && errno != EAGAIN)
+        g_warning ("Unable to read struct signalfd_siginfo: %s",
+                   g_strerror (errno));
+    }
+  else if (size != sizeof (info))
+    {
+      g_warning ("Expected struct signalfd_siginfo of size %"
+                 G_GSIZE_FORMAT ", got %" G_GSSIZE_FORMAT,
+                 sizeof (info), size);
+    }
+  else
+    {
+      forward_signal (info.ssi_signo);
+    }
+
+  return G_SOURCE_CONTINUE;
 }
 
-static void
+static guint
 forward_signals (void)
 {
-  int forward[] = {
+  static int forward[] = {
     SIGHUP, SIGINT, SIGQUIT, SIGTERM, SIGCONT, SIGTSTP, SIGUSR1, SIGUSR2
   };
+  sigset_t mask;
   guint i;
+  int sfd;
 
-  for (i = 0; i < G_N_ELEMENTS(forward); i++)
-    signal (forward[i], forward_signal_handler);
+  sigemptyset (&mask);
+
+  for (i = 0; i < G_N_ELEMENTS (forward); i++)
+    sigaddset (&mask, forward[i]);
+
+  sfd = signalfd (-1, &mask, SFD_NONBLOCK | SFD_CLOEXEC);
+
+  if (sfd < 0)
+    {
+      g_warning ("Unable to watch signals: %s", g_strerror (errno));
+      return 0;
+    }
+
+  /*
+   * We have to block the signals, for two reasons:
+   * - If we didn't, most of them would kill our process.
+   *   Listening for a signal with a signalfd does not prevent the signal's
+   *   default disposition from being acted on.
+   * - Reading from a signalfd only returns information about the signals
+   *   that are still pending for the process. If we ignored them instead
+   *   of blocking them, they would no longer be pending by the time the
+   *   main loop wakes up and reads from the signalfd.
+   */
+  pthread_sigmask (SIG_BLOCK, &mask, NULL);
+
+#if GLIB_CHECK_VERSION (2, 36, 0)
+  return g_unix_fd_add (sfd, G_IO_IN, forward_signal_handler, NULL);
+#else
+  GIOChannel *channel = g_io_channel_unix_new (sfd);
+  guint ret;
+
+  /* Disable text recoding, treat it as a bytestream */
+  g_io_channel_set_encoding (channel, NULL, NULL);
+  ret = g_io_add_watch (channel, G_IO_IN, forward_signal_handler, NULL);
+  g_io_channel_unref (channel);
+  return ret;
+#endif
 }
 
 static void
@@ -473,6 +575,7 @@ main (int    argc,
     { "directory", 0, 0, G_OPTION_ARG_FILENAME, &opt_directory, "Working directory in which to run the command", "DIR" },
     { NULL }
   };
+  guint signal_source = 0;
 
   setlocale (LC_ALL, "");
 
@@ -516,6 +619,16 @@ main (int    argc,
 
   if (verbose)
     g_log_set_handler (G_LOG_DOMAIN, G_LOG_LEVEL_DEBUG, message_handler, NULL);
+
+  /* We have to block the signals we want to forward before we start any
+   * other thread, and in particular the GDBus worker thread, because
+   * the signal mask is per-thread. We need all threads to have the same
+   * mask, otherwise a thread that doesn't have the mask will receive
+   * process-directed signals, causing the whole process to exit. */
+  signal_source = forward_signals ();
+
+  if (signal_source == 0)
+    return 1;
 
   session_bus = g_bus_get_sync (G_BUS_TYPE_SESSION, NULL, &error);
   if (session_bus == NULL)
@@ -820,13 +933,14 @@ retry:
 
   g_debug ("child_pid: %d", child_pid);
 
-  forward_signals ();
-
   loop = g_main_loop_new (NULL, FALSE);
 
   g_signal_connect (session_bus, "closed", G_CALLBACK (session_bus_closed_cb), loop);
 
   g_main_loop_run (loop);
+
+  if (signal_source != 0)
+    g_source_remove (signal_source);
 
   return 0;
 }

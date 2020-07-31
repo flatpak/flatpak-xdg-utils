@@ -28,6 +28,7 @@ conf.set('_GNU_SOURCE', 1)
 config_h = configure_file(output: 'config.h', configuration: conf)
 
 gio_unix = dependency('gio-unix-2.0')
+threads = dependency('threads')
 
 srcinc = include_directories('src')
 
