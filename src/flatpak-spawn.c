@@ -88,7 +88,7 @@ spawn_exited_cb (G_GNUC_UNUSED GDBusConnection *connection,
 
   if (child_pid == client_pid)
     {
-      int exit_code = 0;
+      int exit_code;
 
       if (WIFEXITED (exit_status))
         {
@@ -115,7 +115,7 @@ spawn_exited_cb (G_GNUC_UNUSED GDBusConnection *connection,
           /* EX_SOFTWARE "internal software error" from sysexits.h, for want of
            * a better code.
            */
-          exit_status = 70;
+          exit_code = 70;
         }
 
       g_debug ("child exit code %d: %d", client_pid, exit_code);
