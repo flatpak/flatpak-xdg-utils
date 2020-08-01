@@ -93,9 +93,14 @@ case "$ci_distro" in
         fi
 
         case "$ci_suite" in
-            (trusty)
+            (trusty|xenial)
                 wget https://github.com/ninja-build/ninja/releases/download/v1.8.2/ninja-linux.zip
                 $sudo unzip ninja-linux.zip -d /usr/local/bin
+                ;;
+        esac
+
+        case "$ci_suite" in
+            (trusty)
                 $sudo apt-get -qq -y --no-install-recommends install \
                     python3.5
                 $sudo python3.5 /usr/bin/pip3 install meson
