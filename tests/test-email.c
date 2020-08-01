@@ -33,6 +33,12 @@
 
 typedef struct
 {
+  guint32 iface_version;
+} Config;
+
+typedef struct
+{
+  const Config *config;
   GSubprocess *dbus_daemon;
   gchar *dbus_address;
   GSubprocess *xdg_email;
@@ -41,11 +47,6 @@ typedef struct
   guint mock_object;
   GQueue invocations;
 } Fixture;
-
-typedef struct
-{
-  int dummy;
-} Config;
 
 static void
 mock_method_call (GDBusConnection *conn G_GNUC_UNUSED,
@@ -65,9 +66,51 @@ mock_method_call (GDBusConnection *conn G_GNUC_UNUSED,
   g_test_message ("Method called: %s.%s%s", interface_name, method_name,
                   params);
 
+  if (g_strcmp0 (interface_name, "org.freedesktop.portal.Email") != 0 ||
+      g_strcmp0 (method_name, "ComposeEmail") != 0)
+    {
+      g_dbus_method_invocation_return_error (invocation,
+                                             G_DBUS_ERROR,
+                                             G_DBUS_ERROR_UNKNOWN_METHOD,
+                                             "Not ComposeEmail");
+      return;
+    }
+
   g_queue_push_tail (&f->invocations, g_object_ref (invocation));
   g_dbus_method_invocation_return_value (invocation,
                                          g_variant_new ("(o)", "/foo"));
+}
+
+GVariant *
+mock_getter (GDBusConnection *conn G_GNUC_UNUSED,
+             const gchar *sender G_GNUC_UNUSED,
+             const gchar *object_path G_GNUC_UNUSED,
+             const gchar *interface_name,
+             const gchar *property_name,
+             GError **error,
+             gpointer user_data)
+{
+  Fixture *f = user_data;
+
+  g_test_message ("Get property: %s.%s", interface_name, property_name);
+
+  if (g_strcmp0 (interface_name, "org.freedesktop.portal.Email") == 0 &&
+      g_strcmp0 (property_name, "version") == 0)
+    {
+      return g_variant_new_uint32 (f->config->iface_version);
+    }
+  else
+    {
+#if GLIB_CHECK_VERSION(2, 42, 0)
+      g_set_error (error, G_DBUS_ERROR, G_DBUS_ERROR_UNKNOWN_PROPERTY,
+                   "Unknown property");
+#else
+      /* This is the closest we can do in older versions */
+      g_set_error (error, G_DBUS_ERROR, G_DBUS_ERROR_UNKNOWN_METHOD,
+                   "Unknown property");
+#endif
+      return NULL;
+    }
 }
 
 static GDBusArgInfo arg_parent_window =
@@ -122,28 +165,56 @@ static GDBusMethodInfo *method_info[] =
   NULL
 };
 
+static GDBusPropertyInfo prop_version_info =
+{
+  .ref_count = -1,
+  .name = "version",
+  .signature = "u",
+  .flags = G_DBUS_PROPERTY_INFO_FLAGS_READABLE,
+  .annotations = NULL
+};
+
+static GDBusPropertyInfo *props_info[] =
+{
+  &prop_version_info,
+  NULL
+};
+
 static GDBusInterfaceInfo iface_info =
 {
   -1,
   PORTAL_IFACE_NAME,
   method_info,
   NULL, /* signals */
-  NULL, /* properties */
+  props_info,
   NULL  /* annotations */
+};
+
+static GDBusInterfaceInfo v0_iface_info =
+{
+  .ref_count = -1,
+  .name = PORTAL_IFACE_NAME,
+  .methods = method_info,
+  .signals = NULL,
+  .properties = NULL,
+  .annotations = NULL
 };
 
 static const GDBusInterfaceVTable vtable =
 {
   mock_method_call,
-  NULL, /* get */
+  mock_getter,
   NULL  /* set */
 };
 
 static void
 setup (Fixture *f,
-       gconstpointer context G_GNUC_UNUSED)
+       gconstpointer context)
 {
   g_autoptr(GError) error = NULL;
+  GDBusInterfaceInfo *chosen_iface_info;
+
+  f->config = context;
 
   g_queue_init (&f->invocations);
 
@@ -161,9 +232,14 @@ setup (Fixture *f,
   g_assert_no_error (error);
   g_assert_nonnull (f->mock_conn);
 
+  if (f->config->iface_version == 0)
+    chosen_iface_info = &v0_iface_info;
+  else
+    chosen_iface_info = &iface_info;
+
   f->mock_object = g_dbus_connection_register_object (f->mock_conn,
                                                       PORTAL_OBJECT_PATH,
-                                                      &iface_info,
+                                                      chosen_iface_info,
                                                       &vtable,
                                                       f,
                                                       NULL,
@@ -219,6 +295,7 @@ test_minimal (Fixture *f,
   g_autoptr(GVariantDict) dict = NULL;
   GVariant *parameters;
   const gchar *window;
+  const gchar **addresses;
   const gchar *address;
 
   launcher = g_subprocess_launcher_new (G_SUBPROCESS_FLAGS_STDOUT_PIPE);
@@ -255,8 +332,20 @@ test_minimal (Fixture *f,
   g_assert_cmpstr (window, ==, "");
 
   dict = g_variant_dict_new (asv);
-  g_assert_true (g_variant_dict_lookup (dict, "address", "&s", &address));
-  g_assert_cmpstr (address, ==, "me@example.com");
+
+  if (f->config->iface_version >= 3)
+    {
+      g_assert_true (g_variant_dict_lookup (dict, "addresses", "^a&s", &addresses));
+      g_assert_cmpstr (addresses[0], ==, "me@example.com");
+      g_assert_cmpstr (addresses[1], ==, NULL);
+      g_free (addresses);
+    }
+  else
+    {
+      g_assert_true (g_variant_dict_lookup (dict, "address", "&s", &address));
+      g_assert_cmpstr (address, ==, "me@example.com");
+    }
+
   g_assert_false (g_variant_dict_contains (dict, "subject"));
   g_assert_false (g_variant_dict_contains (dict, "body"));
   g_assert_false (g_variant_dict_contains (dict, "attachments"));
@@ -274,6 +363,7 @@ test_maximal (Fixture *f,
   g_autoptr(GVariant) attachments = NULL;
   GVariant *parameters;
   const gchar *window;
+  const gchar **addresses;
   const gchar *address;
   const gchar *subject;
   const gchar *body;
@@ -315,8 +405,20 @@ test_maximal (Fixture *f,
   g_assert_cmpstr (window, ==, "");
 
   dict = g_variant_dict_new (asv);
-  g_assert_true (g_variant_dict_lookup (dict, "address", "&s", &address));
-  g_assert_cmpstr (address, ==, "me@example.com");
+
+  if (f->config->iface_version >= 3)
+    {
+      g_assert_true (g_variant_dict_lookup (dict, "addresses", "^a&s", &addresses));
+      g_assert_cmpstr (addresses[0], ==, "me@example.com");
+      g_assert_cmpstr (addresses[1], ==, NULL);
+      g_free (addresses);
+    }
+  else
+    {
+      g_assert_true (g_variant_dict_lookup (dict, "address", "&s", &address));
+      g_assert_cmpstr (address, ==, "me@example.com");
+    }
+
   g_assert_true (g_variant_dict_lookup (dict, "subject", "&s", &subject));
   g_assert_cmpstr (subject, ==, "Make Money Fast");
   g_assert_true (g_variant_dict_lookup (dict, "body", "&s", &body));
@@ -355,15 +457,34 @@ teardown (Fixture *f,
   alarm (0);
 }
 
+static const Config v0 =
+{
+  .iface_version = 0,
+};
+
+static const Config v1 =
+{
+  .iface_version = 1,
+};
+
+static const Config v3 =
+{
+  .iface_version = 3,
+};
+
 int
 main (int argc,
       char **argv)
 {
   g_test_init (&argc, &argv, NULL);
 
-  g_test_add ("/help", Fixture, NULL, setup, test_help, teardown);
-  g_test_add ("/minimal", Fixture, NULL, setup, test_minimal, teardown);
-  g_test_add ("/maximal", Fixture, NULL, setup, test_maximal, teardown);
+  g_test_add ("/help", Fixture, &v0, setup, test_help, teardown);
+  g_test_add ("/minimal/v0", Fixture, &v0, setup, test_minimal, teardown);
+  g_test_add ("/minimal/v1", Fixture, &v1, setup, test_minimal, teardown);
+  g_test_add ("/minimal/v3", Fixture, &v3, setup, test_minimal, teardown);
+  g_test_add ("/maximal/v0", Fixture, &v0, setup, test_maximal, teardown);
+  g_test_add ("/maximal/v1", Fixture, &v1, setup, test_maximal, teardown);
+  g_test_add ("/maximal/v3", Fixture, &v3, setup, test_maximal, teardown);
 
   return g_test_run ();
 }
