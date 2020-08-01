@@ -30,6 +30,7 @@
 #define PORTAL_BUS_NAME "org.freedesktop.portal.Desktop"
 #define PORTAL_OBJECT_PATH "/org/freedesktop/portal/desktop"
 #define PORTAL_IFACE_NAME "org.freedesktop.portal.Email"
+#define PORTAL_IFACE_NAME_OPENURI "org.freedesktop.portal.OpenURI"
 
 typedef struct
 {
@@ -45,6 +46,7 @@ typedef struct
   gchar *xdg_email_path;
   GDBusConnection *mock_conn;
   guint mock_object;
+  guint mock_openuri_object;
   GQueue invocations;
 } Fixture;
 
@@ -66,13 +68,22 @@ mock_method_call (GDBusConnection *conn G_GNUC_UNUSED,
   g_test_message ("Method called: %s.%s%s", interface_name, method_name,
                   params);
 
-  if (g_strcmp0 (interface_name, "org.freedesktop.portal.Email") != 0 ||
-      g_strcmp0 (method_name, "ComposeEmail") != 0)
+  if (g_strcmp0 (interface_name, "org.freedesktop.portal.Email") == 0 &&
+      g_strcmp0 (method_name, "ComposeEmail") == 0)
+    {
+      /* OK */
+    }
+  else if (g_strcmp0 (interface_name, "org.freedesktop.portal.OpenURI") == 0 &&
+           g_strcmp0 (method_name, "OpenURI") == 0)
+    {
+      /* OK */
+    }
+  else
     {
       g_dbus_method_invocation_return_error (invocation,
                                              G_DBUS_ERROR,
                                              G_DBUS_ERROR_UNKNOWN_METHOD,
-                                             "Not ComposeEmail");
+                                             "Not ComposeEmail or OpenURI");
       return;
     }
 
@@ -165,6 +176,37 @@ static GDBusMethodInfo *method_info[] =
   NULL
 };
 
+static GDBusArgInfo arg_uri =
+{
+  -1,
+  "uri",
+  "s",
+  NULL  /* annotations */
+};
+
+static GDBusArgInfo *openuri_in_args[] =
+{
+  &arg_parent_window,
+  &arg_uri,
+  &arg_options,
+  NULL
+};
+
+static GDBusMethodInfo openuri_info =
+{
+  -1,
+  "OpenURI",
+  openuri_in_args,
+  out_args,
+  NULL  /* annotations */
+};
+
+static GDBusMethodInfo *openuri_method_info[] =
+{
+  &openuri_info,
+  NULL
+};
+
 static GDBusPropertyInfo prop_version_info =
 {
   .ref_count = -1,
@@ -195,6 +237,16 @@ static GDBusInterfaceInfo v0_iface_info =
   .ref_count = -1,
   .name = PORTAL_IFACE_NAME,
   .methods = method_info,
+  .signals = NULL,
+  .properties = NULL,
+  .annotations = NULL
+};
+
+static GDBusInterfaceInfo openuri_iface_info =
+{
+  .ref_count = -1,
+  .name = PORTAL_IFACE_NAME_OPENURI,
+  .methods = openuri_method_info,
   .signals = NULL,
   .properties = NULL,
   .annotations = NULL
@@ -246,6 +298,16 @@ setup (Fixture *f,
                                                       &error);
   g_assert_no_error (error);
   g_assert_cmpuint (f->mock_object, !=, 0);
+
+  f->mock_openuri_object = g_dbus_connection_register_object (f->mock_conn,
+                                                              PORTAL_OBJECT_PATH,
+                                                              &openuri_iface_info,
+                                                              &vtable,
+                                                              f,
+                                                              NULL,
+                                                              &error);
+  g_assert_no_error (error);
+  g_assert_cmpuint (f->mock_openuri_object, !=, 0);
 
   own_name_sync (f->mock_conn, PORTAL_BUS_NAME);
 }
@@ -447,6 +509,376 @@ test_maximal (Fixture *f,
 }
 
 static void
+test_mailto_none (Fixture *f,
+                  gconstpointer context G_GNUC_UNUSED)
+{
+  g_autoptr(GSubprocessLauncher) launcher = NULL;
+  g_autofree gchar *stdout_buf;
+  g_autofree gchar *stderr_buf;
+  g_autoptr(GError) error = NULL;
+
+  launcher = g_subprocess_launcher_new (G_SUBPROCESS_FLAGS_STDOUT_PIPE |
+                                        G_SUBPROCESS_FLAGS_STDERR_PIPE);
+  g_subprocess_launcher_setenv (launcher,
+                                "DBUS_SESSION_BUS_ADDRESS",
+                                f->dbus_address,
+                                TRUE);
+
+  f->xdg_email = g_subprocess_launcher_spawn (launcher, &error,
+                                              f->xdg_email_path,
+                                              "mailto:?cc=one@example.com&bcc=two@example.com",
+                                              "mailto:?none-here-either=true",
+                                              NULL);
+  g_assert_no_error (error);
+  g_assert_nonnull (f->xdg_email);
+
+  g_subprocess_communicate_utf8 (f->xdg_email, NULL, NULL, &stdout_buf,
+                                 &stderr_buf, &error);
+  g_test_message ("%s", stderr_buf);
+  g_assert_nonnull (strstr (stderr_buf, "No valid addresses found"));
+
+  g_subprocess_wait_check (f->xdg_email, NULL, &error);
+  g_assert_error (error, G_SPAWN_EXIT_ERROR, 1);
+}
+
+static void
+test_mailto_single (Fixture *f,
+                    gconstpointer context G_GNUC_UNUSED)
+{
+  g_autoptr(GSubprocessLauncher) launcher = NULL;
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GDBusMethodInvocation) invocation = NULL;
+  g_autoptr(GVariant) asv = NULL;
+  GVariant *parameters;
+  const gchar *window;
+  const gchar *uri;
+
+  launcher = g_subprocess_launcher_new (G_SUBPROCESS_FLAGS_STDOUT_PIPE);
+  g_subprocess_launcher_setenv (launcher,
+                                "DBUS_SESSION_BUS_ADDRESS",
+                                f->dbus_address,
+                                TRUE);
+
+  f->xdg_email = g_subprocess_launcher_spawn (launcher, &error,
+                                              f->xdg_email_path,
+                                              /* Deliberarely not RFC 6068
+                                               * compliant, to check that
+                                               * we pass it through without
+                                               * parsing or understanding it */
+                                              "MailTo:?you-are-not-expected-to-understand-this",
+                                              NULL);
+  g_assert_no_error (error);
+  g_assert_nonnull (f->xdg_email);
+
+  while (g_queue_get_length (&f->invocations) < 1)
+    g_main_context_iteration (NULL, TRUE);
+
+  g_subprocess_wait_check (f->xdg_email, NULL, &error);
+  g_assert_no_error (error);
+
+  g_assert_cmpuint (g_queue_get_length (&f->invocations), ==, 1);
+  invocation = g_queue_pop_head (&f->invocations);
+
+  g_assert_cmpstr (g_dbus_method_invocation_get_interface_name (invocation),
+                   ==, PORTAL_IFACE_NAME_OPENURI);
+  g_assert_cmpstr (g_dbus_method_invocation_get_method_name (invocation),
+                   ==, "OpenURI");
+
+  parameters = g_dbus_method_invocation_get_parameters (invocation);
+  g_assert_cmpstr (g_variant_get_type_string (parameters), ==, "(ssa{sv})");
+  g_variant_get (parameters, "(&s&s@a{sv})",
+                 &window, &uri, &asv);
+  g_assert_cmpstr (window, ==, "");
+  g_assert_cmpstr (uri, ==, "MailTo:?you-are-not-expected-to-understand-this");
+}
+
+static void
+test_mailto_multiple (Fixture *f,
+                      gconstpointer context G_GNUC_UNUSED)
+{
+  g_autoptr(GSubprocessLauncher) launcher = NULL;
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GDBusMethodInvocation) invocation = NULL;
+  g_autoptr(GVariant) asv = NULL;
+  g_autoptr(GVariantDict) dict = NULL;
+  GVariant *parameters;
+  const gchar *window;
+  const gchar **addresses;
+  const gchar *address;
+
+  launcher = g_subprocess_launcher_new (G_SUBPROCESS_FLAGS_STDOUT_PIPE);
+  g_subprocess_launcher_setenv (launcher,
+                                "DBUS_SESSION_BUS_ADDRESS",
+                                f->dbus_address,
+                                TRUE);
+
+  f->xdg_email = g_subprocess_launcher_spawn (launcher, &error,
+                                              f->xdg_email_path,
+                                              "mailto:me@example.com",
+                                              "mailto:you@example.com",
+                                              NULL);
+  g_assert_no_error (error);
+  g_assert_nonnull (f->xdg_email);
+
+  while (g_queue_get_length (&f->invocations) < 1)
+    g_main_context_iteration (NULL, TRUE);
+
+  g_subprocess_wait_check (f->xdg_email, NULL, &error);
+  g_assert_no_error (error);
+
+  g_assert_cmpuint (g_queue_get_length (&f->invocations), ==, 1);
+  invocation = g_queue_pop_head (&f->invocations);
+
+  g_assert_cmpstr (g_dbus_method_invocation_get_interface_name (invocation),
+                   ==, PORTAL_IFACE_NAME);
+  g_assert_cmpstr (g_dbus_method_invocation_get_method_name (invocation),
+                   ==, "ComposeEmail");
+
+  parameters = g_dbus_method_invocation_get_parameters (invocation);
+  g_assert_cmpstr (g_variant_get_type_string (parameters), ==, "(sa{sv})");
+  g_variant_get (parameters, "(&s@a{sv})",
+                 &window, &asv);
+  g_assert_cmpstr (window, ==, "");
+
+  dict = g_variant_dict_new (asv);
+
+  if (f->config->iface_version >= 3)
+    {
+      g_assert_true (g_variant_dict_lookup (dict, "addresses", "^a&s", &addresses));
+      g_assert_cmpstr (addresses[0], ==, "me@example.com");
+      g_assert_cmpstr (addresses[1], ==, "you@example.com");
+      g_assert_cmpstr (addresses[2], ==, NULL);
+      g_free (addresses);
+    }
+  else
+    {
+      g_assert_true (g_variant_dict_lookup (dict, "address", "&s", &address));
+      g_assert_cmpstr (address, ==, "me@example.com");
+    }
+
+  g_assert_false (g_variant_dict_contains (dict, "subject"));
+  g_assert_false (g_variant_dict_contains (dict, "body"));
+  g_assert_false (g_variant_dict_contains (dict, "attachments"));
+}
+
+static void
+test_mailto_complex (Fixture *f,
+                     gconstpointer context G_GNUC_UNUSED)
+{
+  g_autoptr(GSubprocessLauncher) launcher = NULL;
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GDBusMethodInvocation) invocation = NULL;
+  g_autoptr(GVariant) asv = NULL;
+  g_autoptr(GVariantDict) dict = NULL;
+  g_autoptr(GVariant) attachments = NULL;
+  GVariant *parameters;
+  const gchar *window;
+  const gchar **addresses;
+  const gchar *address;
+  const gchar *subject;
+  const gchar *body;
+
+  launcher = g_subprocess_launcher_new (G_SUBPROCESS_FLAGS_STDOUT_PIPE);
+  g_subprocess_launcher_setenv (launcher,
+                                "DBUS_SESSION_BUS_ADDRESS",
+                                f->dbus_address,
+                                TRUE);
+
+  f->xdg_email = g_subprocess_launcher_spawn (launcher, &error,
+                                              f->xdg_email_path,
+                                              "mailto:nobody@example.com",
+                                              (
+                                                "mailto:"
+                                                  "me@example.com"
+                                                  ","
+                                                  "you@example.com"
+                                                "?"
+                                                  "subject=Make%20Money%20Fast"
+                                                "&"
+                                                  "body=Your%20spam%20here"
+                                                "&"
+                                                  "cc="
+                                                    "us@example.com"
+                                                    ","
+                                                    "them@example.com"
+                                                "&"
+                                                  "Bcc="
+                                                    "hidden@example.com"
+                                                    ","
+                                                    "secret@example.com"
+                                                "&"
+                                                  "Precedence=bulk"
+                                                "&"
+                                                  "X-Mailer=xdg-email"
+                                              ),
+                                              NULL);
+  g_assert_no_error (error);
+  g_assert_nonnull (f->xdg_email);
+
+  while (g_queue_get_length (&f->invocations) < 1)
+    g_main_context_iteration (NULL, TRUE);
+
+  g_subprocess_wait_check (f->xdg_email, NULL, &error);
+  g_assert_no_error (error);
+
+  g_assert_cmpuint (g_queue_get_length (&f->invocations), ==, 1);
+  invocation = g_queue_pop_head (&f->invocations);
+
+  g_assert_cmpstr (g_dbus_method_invocation_get_interface_name (invocation),
+                   ==, PORTAL_IFACE_NAME);
+  g_assert_cmpstr (g_dbus_method_invocation_get_method_name (invocation),
+                   ==, "ComposeEmail");
+
+  parameters = g_dbus_method_invocation_get_parameters (invocation);
+  g_assert_cmpstr (g_variant_get_type_string (parameters), ==, "(sa{sv})");
+  g_variant_get (parameters, "(&s@a{sv})",
+                 &window, &asv);
+  g_assert_cmpstr (window, ==, "");
+
+  dict = g_variant_dict_new (asv);
+
+  if (f->config->iface_version >= 3)
+    {
+      g_assert_true (g_variant_dict_lookup (dict, "addresses", "^a&s", &addresses));
+      g_assert_cmpstr (addresses[0], ==, "nobody@example.com");
+      g_assert_cmpstr (addresses[1], ==, "me@example.com");
+      g_assert_cmpstr (addresses[2], ==, "you@example.com");
+      g_assert_cmpstr (addresses[3], ==, NULL);
+      g_free (addresses);
+
+      g_assert_true (g_variant_dict_lookup (dict, "cc", "^a&s", &addresses));
+      g_assert_cmpstr (addresses[0], ==, "us@example.com");
+      g_assert_cmpstr (addresses[1], ==, "them@example.com");
+      g_assert_cmpstr (addresses[2], ==, NULL);
+      g_free (addresses);
+
+      g_assert_true (g_variant_dict_lookup (dict, "bcc", "^a&s", &addresses));
+      g_assert_cmpstr (addresses[0], ==, "hidden@example.com");
+      g_assert_cmpstr (addresses[1], ==, "secret@example.com");
+      g_assert_cmpstr (addresses[2], ==, NULL);
+      g_free (addresses);
+    }
+  else
+    {
+      /* all addresses except the first are ignored */
+      g_assert_true (g_variant_dict_lookup (dict, "address", "&s", &address));
+      g_assert_cmpstr (address, ==, "nobody@example.com");
+    }
+
+  g_assert_true (g_variant_dict_lookup (dict, "subject", "&s", &subject));
+  g_assert_cmpstr (subject, ==, "Make Money Fast");
+  g_assert_true (g_variant_dict_lookup (dict, "body", "&s", &body));
+  g_assert_cmpstr (body, ==, "Your spam here");
+}
+
+static void
+test_mailto_combined (Fixture *f,
+                      gconstpointer context G_GNUC_UNUSED)
+{
+  g_autoptr(GSubprocessLauncher) launcher = NULL;
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GDBusMethodInvocation) invocation = NULL;
+  g_autoptr(GVariant) asv = NULL;
+  g_autoptr(GVariantDict) dict = NULL;
+  g_autoptr(GVariant) attachments = NULL;
+  GVariant *parameters;
+  const gchar *window;
+  const gchar **addresses;
+  const gchar *address;
+  const gchar *subject;
+  const gchar *body;
+
+  launcher = g_subprocess_launcher_new (G_SUBPROCESS_FLAGS_STDOUT_PIPE);
+  g_subprocess_launcher_setenv (launcher,
+                                "DBUS_SESSION_BUS_ADDRESS",
+                                f->dbus_address,
+                                TRUE);
+
+  f->xdg_email = g_subprocess_launcher_spawn (launcher, &error,
+                                              f->xdg_email_path,
+                                              "--cc", "us@example.com",
+                                              "--bcc", "hidden@example.com",
+                                              "--subject", "ignored",
+                                              "--body", "ignored",
+                                              "me@example.com",
+                                              (
+                                                "mailto:"
+                                                  "you@example.com"
+                                                "?"
+                                                  "Precedence=bulk"
+                                                "&"
+                                                  "X-Mailer=xdg-email"
+                                                "&"
+                                                  "subject=Make%20Money%20Fast"
+                                                "&"
+                                                  "body=Your%20spam%20here"
+                                                "&"
+                                                  "cc="
+                                                    "them@example.com"
+                                                "&"
+                                                  "Bcc="
+                                                    "secret@example.com"
+                                              ),
+                                              NULL);
+  g_assert_no_error (error);
+  g_assert_nonnull (f->xdg_email);
+
+  while (g_queue_get_length (&f->invocations) < 1)
+    g_main_context_iteration (NULL, TRUE);
+
+  g_subprocess_wait_check (f->xdg_email, NULL, &error);
+  g_assert_no_error (error);
+
+  g_assert_cmpuint (g_queue_get_length (&f->invocations), ==, 1);
+  invocation = g_queue_pop_head (&f->invocations);
+
+  g_assert_cmpstr (g_dbus_method_invocation_get_interface_name (invocation),
+                   ==, PORTAL_IFACE_NAME);
+  g_assert_cmpstr (g_dbus_method_invocation_get_method_name (invocation),
+                   ==, "ComposeEmail");
+
+  parameters = g_dbus_method_invocation_get_parameters (invocation);
+  g_assert_cmpstr (g_variant_get_type_string (parameters), ==, "(sa{sv})");
+  g_variant_get (parameters, "(&s@a{sv})",
+                 &window, &asv);
+  g_assert_cmpstr (window, ==, "");
+
+  dict = g_variant_dict_new (asv);
+
+  if (f->config->iface_version >= 3)
+    {
+      g_assert_true (g_variant_dict_lookup (dict, "addresses", "^a&s", &addresses));
+      g_assert_cmpstr (addresses[0], ==, "me@example.com");
+      g_assert_cmpstr (addresses[1], ==, "you@example.com");
+      g_assert_cmpstr (addresses[2], ==, NULL);
+      g_free (addresses);
+
+      g_assert_true (g_variant_dict_lookup (dict, "cc", "^a&s", &addresses));
+      g_assert_cmpstr (addresses[0], ==, "us@example.com");
+      g_assert_cmpstr (addresses[1], ==, "them@example.com");
+      g_assert_cmpstr (addresses[2], ==, NULL);
+      g_free (addresses);
+
+      g_assert_true (g_variant_dict_lookup (dict, "bcc", "^a&s", &addresses));
+      g_assert_cmpstr (addresses[0], ==, "hidden@example.com");
+      g_assert_cmpstr (addresses[1], ==, "secret@example.com");
+      g_assert_cmpstr (addresses[2], ==, NULL);
+      g_free (addresses);
+    }
+  else
+    {
+      /* all addresses except the first are ignored */
+      g_assert_true (g_variant_dict_lookup (dict, "address", "&s", &address));
+      g_assert_cmpstr (address, ==, "me@example.com");
+    }
+
+  g_assert_true (g_variant_dict_lookup (dict, "subject", "&s", &subject));
+  g_assert_cmpstr (subject, ==, "Make Money Fast");
+  g_assert_true (g_variant_dict_lookup (dict, "body", "&s", &body));
+  g_assert_cmpstr (body, ==, "Your spam here");
+}
+
+static void
 teardown (Fixture *f,
           gconstpointer context G_GNUC_UNUSED)
 {
@@ -504,6 +936,11 @@ main (int argc,
   g_test_add ("/maximal/v0", Fixture, &v0, setup, test_maximal, teardown);
   g_test_add ("/maximal/v1", Fixture, &v1, setup, test_maximal, teardown);
   g_test_add ("/maximal/v3", Fixture, &v3, setup, test_maximal, teardown);
+  g_test_add ("/mailto/none", Fixture, &v0, setup, test_mailto_none, teardown);
+  g_test_add ("/mailto/single", Fixture, &v3, setup, test_mailto_single, teardown);
+  g_test_add ("/mailto/multiple", Fixture, &v3, setup, test_mailto_multiple, teardown);
+  g_test_add ("/mailto/complex", Fixture, &v3, setup, test_mailto_complex, teardown);
+  g_test_add ("/mailto/combined", Fixture, &v3, setup, test_mailto_combined, teardown);
 
   return g_test_run ();
 }
