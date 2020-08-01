@@ -27,6 +27,8 @@
 #include <fcntl.h>
 #include <errno.h>
 
+#include "backport-autoptr.h"
+
 #define PORTAL_BUS_NAME    "org.freedesktop.portal.Desktop"
 #define PORTAL_OBJECT_PATH "/org/freedesktop/portal/desktop"
 #define PORTAL_IFACE_NAME  "org.freedesktop.portal.Email"
