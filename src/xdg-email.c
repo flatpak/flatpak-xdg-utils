@@ -75,7 +75,7 @@ main (int argc, char *argv[])
   GUnixFDList *fd_list = NULL;
   g_autoptr(GVariant) ret = NULL;
   g_autoptr(GVariant) v = NULL;
-  guint version;
+  guint version = 0;
 
   context = g_option_context_new ("[ mailto-uri | address(es) ]");
 
@@ -132,8 +132,16 @@ main (int argc, char *argv[])
                                      G_MAXINT,
                                      NULL,
                                      NULL);
-  g_variant_get (ret, "(v)", &v);
-  g_variant_get (v, "u", &version);
+  if (ret != NULL)
+    {
+      g_variant_get (ret, "(v)", &v);
+
+      if (g_variant_is_of_type (v, G_VARIANT_TYPE ("u")))
+        g_variant_get (v, "u", &version);
+      else
+        g_warning ("o.fd.portal.Email.version had unexpected type %s",
+                   g_variant_get_type_string (v));
+    }
 
   g_variant_builder_init (&opt_builder, G_VARIANT_TYPE_VARDICT);
 
