@@ -75,7 +75,7 @@ main (int argc, char *argv[])
   GUnixFDList *fd_list = NULL;
   g_autoptr(GVariant) ret = NULL;
   g_autoptr(GVariant) v = NULL;
-  guint version = 0;
+  guint32 version = 0;
 
   context = g_option_context_new ("[ mailto-uri | address(es) ]");
 
