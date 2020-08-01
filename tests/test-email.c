@@ -379,7 +379,12 @@ test_maximal (Fixture *f,
                                              "--subject", "Make Money Fast",
                                              "--body", "Your spam here",
                                              "--attach", "/dev/null",
+                                             "--cc", "us@example.com",
+                                             "--cc", "them@example.com",
+                                             "--bcc", "hidden@example.com",
+                                             "--bcc", "secret@example.com",
                                              "me@example.com",
+                                             "you@example.com",
                                              NULL);
   g_assert_no_error (error);
   g_assert_nonnull (f->xdg_email);
@@ -410,11 +415,25 @@ test_maximal (Fixture *f,
     {
       g_assert_true (g_variant_dict_lookup (dict, "addresses", "^a&s", &addresses));
       g_assert_cmpstr (addresses[0], ==, "me@example.com");
-      g_assert_cmpstr (addresses[1], ==, NULL);
+      g_assert_cmpstr (addresses[1], ==, "you@example.com");
+      g_assert_cmpstr (addresses[2], ==, NULL);
+      g_free (addresses);
+
+      g_assert_true (g_variant_dict_lookup (dict, "cc", "^a&s", &addresses));
+      g_assert_cmpstr (addresses[0], ==, "us@example.com");
+      g_assert_cmpstr (addresses[1], ==, "them@example.com");
+      g_assert_cmpstr (addresses[2], ==, NULL);
+      g_free (addresses);
+
+      g_assert_true (g_variant_dict_lookup (dict, "bcc", "^a&s", &addresses));
+      g_assert_cmpstr (addresses[0], ==, "hidden@example.com");
+      g_assert_cmpstr (addresses[1], ==, "secret@example.com");
+      g_assert_cmpstr (addresses[2], ==, NULL);
       g_free (addresses);
     }
   else
     {
+      /* all addresses except the first are ignored */
       g_assert_true (g_variant_dict_lookup (dict, "address", "&s", &address));
       g_assert_cmpstr (address, ==, "me@example.com");
     }
