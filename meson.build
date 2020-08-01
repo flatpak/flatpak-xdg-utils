@@ -4,6 +4,7 @@ project(
   license: 'LGPL-2.1+',
   default_options: [
     'buildtype=debugoptimized',
+    'c_std=gnu99',
     'warning_level=2',
   ],
   meson_version: '>= 0.46.0',
