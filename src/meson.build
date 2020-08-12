@@ -1,7 +1,7 @@
 flatpak_spawn = executable(
   'flatpak-spawn',
   sources: 'flatpak-spawn.c',
-  dependencies: [gio_unix],
+  dependencies: [gio_unix, threads],
   c_args: ['-include', '@0@'.format(config_h)],
   install: true,
 )
