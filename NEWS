@@ -1,3 +1,11 @@
+Changes in 1.0.2
+================
+
+Better implementation of xdg-email.
+flatpak-spawn supports new features of the sandbox portal.
+Fixes to flatpak-spawn signal handling.
+
+
 Changes in 1.0.1
 ================
 
