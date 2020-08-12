@@ -86,23 +86,23 @@ spawn_exited_cb (G_GNUC_UNUSED GDBusConnection *connection,
                  G_GNUC_UNUSED gpointer         user_data)
 {
   guint32 client_pid = 0;
-  guint32 exit_status = 0;
+  guint32 wait_status = 0;
 
   if (!g_variant_is_of_type (parameters, G_VARIANT_TYPE ("(uu)")))
     return;
 
-  g_variant_get (parameters, "(uu)", &client_pid, &exit_status);
-  g_debug ("child exited %d: %d", client_pid, exit_status);
+  g_variant_get (parameters, "(uu)", &client_pid, &wait_status);
+  g_debug ("child exited %d: %d", client_pid, wait_status);
 
   if (child_pid == client_pid)
     {
-      int exit_code = 0;
+      int exit_code;
 
-      if (WIFEXITED (exit_status))
+      if (WIFEXITED (wait_status))
         {
-          exit_code = WEXITSTATUS (exit_status);
+          exit_code = WEXITSTATUS (wait_status);
         }
-      else if (WIFSIGNALED (exit_status))
+      else if (WIFSIGNALED (wait_status))
         {
           /* Smush the signal into an unsigned byte, as the shell does. This is
            * not quite right from the perspective of whatever ran flatpak-spawn
@@ -110,7 +110,7 @@ spawn_exited_cb (G_GNUC_UNUSED GDBusConnection *connection,
            *  alternative is to disconnect all signal() handlers then send this
            *  signal to ourselves and hope it kills us.
            */
-          exit_code = 128 + WTERMSIG (exit_status);
+          exit_code = 128 + WTERMSIG (wait_status);
         }
       else
         {
@@ -118,12 +118,12 @@ spawn_exited_cb (G_GNUC_UNUSED GDBusConnection *connection,
            * code specified neither WUNTRACED nor WIFSIGNALED, then exactly one
            * of WIFEXITED() or WIFSIGNALED() will be true.
            */
-          g_warning ("exit status %d is neither WIFEXITED() nor WIFSIGNALED()",
-                     exit_status);
+          g_warning ("wait status %d is neither WIFEXITED() nor WIFSIGNALED()",
+                     wait_status);
           /* EX_SOFTWARE "internal software error" from sysexits.h, for want of
            * a better code.
            */
-          exit_status = 70;
+          exit_code = 70;
         }
 
       g_debug ("child exit code %d: %d", client_pid, exit_code);
