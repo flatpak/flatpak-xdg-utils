@@ -21,15 +21,15 @@
 # SOFTWARE.
 
 sudo: required
-dist: xenial
+dist: bionic
 language: c
 script:
   - ./tests/ci-install.sh
   - ci_parallel=2 ci_sudo=yes ./tests/ci-build.sh
 
 env:
-  # GLib 2.48
-  - ci_suite=xenial
+  # GLib 2.56
+  - ci_suite=bionic
   # GLib 2.40. Not building the debug variant because the compiler is too
   # old to support -fsanitize=address
   - ci_docker=ubuntu:trusty ci_distro=ubuntu ci_suite=trusty ci_variant=production

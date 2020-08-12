@@ -1,5 +1,5 @@
 test_env = environment()
-test_env.set('G_DEBUG', 'gc-friendly')
+test_env.set('G_DEBUG', 'gc-friendly,fatal-criticals')
 test_env.set('G_TEST_SRCDIR', meson.current_source_dir())
 test_env.set('G_TEST_BUILDDIR', meson.current_build_dir())
 test_env.set('GIO_USE_VFS', 'local')
