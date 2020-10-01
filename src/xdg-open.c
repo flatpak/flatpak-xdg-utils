@@ -106,7 +106,7 @@ main (int argc, char *argv[])
       GUnixFDList *fd_list;
 
       path = g_file_get_path (file);
-      fd = open (path, O_PATH | O_CLOEXEC);
+      fd = open (path, O_RDONLY | O_CLOEXEC);
       if (fd == -1)
         {
           g_printerr ("Failed to open '%s': %s", path, g_strerror (errno));
