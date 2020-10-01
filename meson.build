@@ -1,6 +1,6 @@
 project(
   'flatpak-xdg-utils', 'c',
-  version: '1.0.2',
+  version: '1.0.3',
   license: 'LGPL-2.1+',
   default_options: [
     'buildtype=debugoptimized',
