@@ -1,3 +1,8 @@
+Changes in 1.0.4
+================
+
+Close intermediate copies of forwarded fds in flatpak-spawn.
+
 Changes in 1.0.3
 ================
 
