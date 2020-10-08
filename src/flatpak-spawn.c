@@ -520,6 +520,8 @@ add_paths_to_variant (GVariantBuilder *builder, GUnixFDList *fd_list, const GStr
           g_printerr ("Failed to add fd to list for %s: %s\n", paths[i], error->message);
           return FALSE;
         }
+      /* The GUnixFdList keeps a duplicate, so we should release the original */
+      close (path_fd);
       g_variant_builder_add (builder, "h", handle);
     }
 
@@ -711,6 +713,8 @@ main (int    argc,
           g_printerr ("Can't append fd: %s\n", error->message);
           return 1;
         }
+      /* The GUnixFdList keeps a duplicate, so we should release the original */
+      close (fd);
       g_variant_builder_add (fd_builder, "{uh}", fd, handle);
     }
 
@@ -932,6 +936,10 @@ retry:
   }
 
   g_debug ("child_pid: %d", child_pid);
+
+  /* Release our reference to the fds, so that only the copy we sent over
+   * D-Bus remains open */
+  g_clear_object (&fd_list);
 
   loop = g_main_loop_new (NULL, FALSE);
 
