@@ -496,6 +496,37 @@ check_portal_supports (const char *option, guint32 supports_needed)
     }
 }
 
+static gint32
+path_to_handle (GUnixFDList *fd_list,
+                const char *path,
+                GError **error)
+{
+  int path_fd = open (path, O_PATH|O_CLOEXEC|O_NOFOLLOW|O_RDONLY);
+  int saved_errno;
+  gint32 handle;
+
+  if (path_fd < 0)
+    {
+      saved_errno = errno;
+      g_set_error (error, G_IO_ERROR, g_io_error_from_errno (saved_errno),
+                   "Failed to open %s to expose in sandbox: %s",
+                   path, g_strerror (saved_errno));
+      return -1;
+    }
+
+  handle = g_unix_fd_list_append (fd_list, path_fd, error);
+
+  if (handle < 0)
+    {
+      g_prefix_error (error, "Failed to add fd to list for %s: ", path);
+      return -1;
+    }
+
+  /* The GUnixFdList keeps a duplicate, so we should release the original */
+  close (path_fd);
+  return handle;
+}
+
 static gboolean
 add_paths_to_variant (GVariantBuilder *builder, GUnixFDList *fd_list, const GStrv paths, gboolean ignore_errors)
 {
@@ -506,28 +537,17 @@ add_paths_to_variant (GVariantBuilder *builder, GUnixFDList *fd_list, const GStr
 
   for (gsize i = 0; paths[i] != NULL; i++)
     {
-      gint handle = -1;
-      int path_fd = open (paths[i], O_PATH|O_CLOEXEC|O_NOFOLLOW|O_RDONLY);
-      if (path_fd == -1)
+      gint32 handle = path_to_handle (fd_list, paths[i], ignore_errors ? NULL : &error);
+
+      if (handle < 0)
         {
           if (ignore_errors)
             continue;
 
-          g_printerr ("Failed to open %s to expose in sandbox\n", paths[i]);
+          g_printerr ("%s\n", error->message);
           return FALSE;
         }
 
-      handle = g_unix_fd_list_append (fd_list, path_fd, &error);
-      if (handle == -1)
-        {
-          if (ignore_errors)
-            continue;
-
-          g_printerr ("Failed to add fd to list for %s: %s\n", paths[i], error->message);
-          return FALSE;
-        }
-      /* The GUnixFdList keeps a duplicate, so we should release the original */
-      close (path_fd);
       g_variant_builder_add (builder, "h", handle);
     }
 
