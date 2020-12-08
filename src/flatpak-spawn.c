@@ -50,6 +50,7 @@ typedef enum {
   FLATPAK_SPAWN_FLAGS_EXPOSE_PIDS = 1 << 5, /* Since 1.6, optional */
   FLATPAK_SPAWN_FLAGS_NOTIFY_START = 1 << 6,
   FLATPAK_SPAWN_FLAGS_SHARE_PIDS = 1 << 7,
+  FLATPAK_SPAWN_FLAGS_EMPTY_APP = 1 << 8,
 } FlatpakSpawnFlags;
 
 typedef enum {
@@ -800,6 +801,8 @@ main (int    argc,
   char **opt_sandbox_expose_path_try = NULL;
   char **opt_sandbox_expose_path_ro_try = NULL;
   char *opt_directory = NULL;
+  char *opt_app_path = NULL;
+  char *opt_usr_path = NULL;
   g_autofree char *cwd = NULL;
   g_autofree char *home_realpath = NULL;
   const char *flatpak_id = NULL;
@@ -826,6 +829,8 @@ main (int    argc,
     { "sandbox-flag", 0, 0, G_OPTION_ARG_CALLBACK, sandbox_flag_callback, "Enable sandbox flag", "FLAG" },
     { "host", 0, 0, G_OPTION_ARG_NONE, &opt_host, "Start the command on the host", NULL },
     { "directory", 0, 0, G_OPTION_ARG_FILENAME, &opt_directory, "Working directory in which to run the command", "DIR" },
+    { "app-path", 0, 0, G_OPTION_ARG_FILENAME, &opt_app_path, "Replace runtime's /app with DIR or empty", "DIR|\"\"" },
+    { "usr-path", 0, 0, G_OPTION_ARG_FILENAME, &opt_usr_path, "Replace runtime's /usr with DIR", "DIR" },
     { NULL }
   };
   guint signal_source = 0;
@@ -1178,6 +1183,68 @@ main (int    argc,
 
       g_variant_builder_add (&options_builder, "{s@v}", "sandbox-expose-fd-ro",
                              g_variant_new_variant (g_variant_builder_end (g_steal_pointer (&expose_fd_builder))));
+    }
+
+  if (opt_app_path != NULL)
+    {
+      gint32 handle;
+
+      g_debug ("Using \"%s\" as /app instead of runtime", opt_app_path);
+
+      if (opt_host)
+        {
+          g_printerr ("--host not compatible with --app-path\n");
+          return 1;
+        }
+
+      check_portal_version ("app-path", 6);
+
+      if (opt_app_path[0] == '\0')
+        {
+          /* Empty path is special-cased to mean an empty directory */
+          spawn_flags |= FLATPAK_SPAWN_FLAGS_EMPTY_APP;
+        }
+      else
+        {
+          handle = path_to_handle (fd_list, opt_app_path, home_realpath,
+                                   flatpak_id, &error);
+
+          if (handle < 0)
+            {
+              g_printerr ("%s\n", error->message);
+              return 1;
+            }
+
+          g_variant_builder_add (&options_builder, "{s@v}", "app-fd",
+                                 g_variant_new_variant (g_variant_new_handle (handle)));
+        }
+    }
+
+  if (opt_usr_path != NULL)
+    {
+      gint32 handle;
+
+      g_debug ("Using %s as /usr instead of runtime", opt_usr_path);
+
+      if (opt_host)
+        {
+          g_printerr ("--host not compatible with --usr-path\n");
+          return 1;
+        }
+
+      check_portal_version ("usr-path", 6);
+
+      handle = path_to_handle (fd_list, opt_usr_path, home_realpath,
+                               flatpak_id, &error);
+
+      if (handle < 0)
+        {
+          g_printerr ("%s\n", error->message);
+          return 1;
+        }
+
+      g_variant_builder_add (&options_builder, "{s@v}", "usr-fd",
+                             g_variant_new_variant (g_variant_new_handle (handle)));
     }
 
   if (!opt_directory)
