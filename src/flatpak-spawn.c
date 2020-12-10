@@ -27,6 +27,8 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <unistd.h>
+
 #include <glib-unix.h>
 #include <gio/gio.h>
 #include <gio/gunixfdlist.h>
@@ -496,9 +498,55 @@ check_portal_supports (const char *option, guint32 supports_needed)
     }
 }
 
+/*
+ * @str: A path
+ * @prefix: A possible prefix
+ *
+ * The same as flatpak_has_path_prefix(), but instead of a boolean,
+ * return the part of @str after @prefix (non-%NULL but possibly empty)
+ * if @str has prefix @prefix, or %NULL if it does not.
+ *
+ * Returns: (nullable) (transfer none): the part of @str after @prefix,
+ *  or %NULL if @str is not below @prefix
+ */
+static const char *
+get_path_after (const char *str,
+                const char *prefix)
+{
+  while (TRUE)
+    {
+      /* Skip consecutive slashes to reach next path
+         element */
+      while (*str == '/')
+        str++;
+      while (*prefix == '/')
+        prefix++;
+
+      /* No more prefix path elements? Done! */
+      if (*prefix == 0)
+        return str;
+
+      /* Compare path element */
+      while (*prefix != 0 && *prefix != '/')
+        {
+          if (*str != *prefix)
+            return NULL;
+          str++;
+          prefix++;
+        }
+
+      /* Matched prefix path element,
+         must be entire str path element */
+      if (*str != '/' && *str != 0)
+        return NULL;
+    }
+}
+
 static gint32
 path_to_handle (GUnixFDList *fd_list,
                 const char *path,
+                const char *home_realpath,
+                const char *flatpak_id,
                 GError **error)
 {
   int path_fd = open (path, O_PATH|O_CLOEXEC|O_NOFOLLOW|O_RDONLY);
@@ -513,6 +561,50 @@ path_to_handle (GUnixFDList *fd_list,
                    path, g_strerror (saved_errno));
       return -1;
     }
+
+  if (home_realpath != NULL && flatpak_id != NULL)
+    {
+      g_autofree char *real = NULL;
+      const char *after = NULL;
+
+      real = realpath (path, NULL);
+
+      if (real != NULL)
+        after = get_path_after (real, home_realpath);
+
+      if (after != NULL)
+        {
+          g_autofree char *var_path = NULL;
+          int var_fd = -1;
+          struct stat path_buf;
+          struct stat var_buf;
+
+          /* @after is possibly "", but that's OK: if @path is exactly $HOME,
+           * we want to check whether it's the same file as
+           * ~/.var/app/$FLATPAK_ID, with no suffix
+           */
+          var_path = g_build_filename (home_realpath, ".var", "app", flatpak_id,
+                                       after, NULL);
+
+          var_fd = open (var_path, O_PATH|O_CLOEXEC|O_NOFOLLOW|O_RDONLY);
+
+          if (var_fd >= 0 &&
+              fstat (path_fd, &path_buf) == 0 &&
+              fstat (var_fd, &var_buf) == 0 &&
+              path_buf.st_dev == var_buf.st_dev &&
+              path_buf.st_ino == var_buf.st_ino)
+            {
+              close (path_fd);
+              path_fd = var_fd;
+              var_fd = -1;
+            }
+          else
+            {
+              close (var_fd);
+            }
+        }
+    }
+
 
   handle = g_unix_fd_list_append (fd_list, path_fd, error);
 
@@ -529,7 +621,12 @@ path_to_handle (GUnixFDList *fd_list,
 }
 
 static gboolean
-add_paths_to_variant (GVariantBuilder *builder, GUnixFDList *fd_list, const GStrv paths, gboolean ignore_errors)
+add_paths_to_variant (GVariantBuilder *builder,
+                      GUnixFDList *fd_list,
+                      const GStrv paths,
+                      const char *home_realpath,
+                      const char *flatpak_id,
+                      gboolean ignore_errors)
 {
   g_autoptr(GError) error = NULL;
 
@@ -538,7 +635,9 @@ add_paths_to_variant (GVariantBuilder *builder, GUnixFDList *fd_list, const GStr
 
   for (gsize i = 0; paths[i] != NULL; i++)
     {
-      gint32 handle = path_to_handle (fd_list, paths[i], ignore_errors ? NULL : &error);
+      gint32 handle = path_to_handle (fd_list, paths[i], home_realpath,
+                                      flatpak_id,
+                                      ignore_errors ? NULL : &error);
 
       if (handle < 0)
         {
@@ -702,6 +801,8 @@ main (int    argc,
   char **opt_sandbox_expose_path_ro_try = NULL;
   char *opt_directory = NULL;
   g_autofree char *cwd = NULL;
+  g_autofree char *home_realpath = NULL;
+  const char *flatpak_id = NULL;
   GVariantBuilder options_builder;
   const GOptionEntry options[] = {
     { "verbose", 'v', 0, G_OPTION_ARG_NONE, &verbose,  "Enable debug output", NULL },
@@ -785,6 +886,11 @@ main (int    argc,
 
   if (signal_source == 0)
     return 1;
+
+  flatpak_id = g_getenv ("FLATPAK_ID");
+
+  if (flatpak_id != NULL)
+    home_realpath = realpath (g_get_home_dir (), NULL);
 
   session_bus = g_bus_get_sync (G_BUS_TYPE_SESSION, NULL, &error);
   if (session_bus == NULL)
@@ -1046,8 +1152,8 @@ main (int    argc,
 
       check_portal_version ("sandbox-expose-path", 3);
 
-      if (!add_paths_to_variant (expose_fd_builder, fd_list, opt_sandbox_expose_path, FALSE)
-          || !add_paths_to_variant (expose_fd_builder, fd_list, opt_sandbox_expose_path_try, TRUE))
+      if (!add_paths_to_variant (expose_fd_builder, fd_list, opt_sandbox_expose_path, home_realpath, flatpak_id, FALSE)
+          || !add_paths_to_variant (expose_fd_builder, fd_list, opt_sandbox_expose_path_try, home_realpath, flatpak_id, TRUE))
         return 1;
 
       g_variant_builder_add (&options_builder, "{s@v}", "sandbox-expose-fd",
@@ -1066,8 +1172,8 @@ main (int    argc,
 
       check_portal_version ("sandbox-expose-path-ro", 3);
 
-      if (!add_paths_to_variant (expose_fd_builder, fd_list, opt_sandbox_expose_path_ro, FALSE)
-          || !add_paths_to_variant (expose_fd_builder, fd_list, opt_sandbox_expose_path_ro_try, TRUE))
+      if (!add_paths_to_variant (expose_fd_builder, fd_list, opt_sandbox_expose_path_ro, home_realpath, flatpak_id, FALSE)
+          || !add_paths_to_variant (expose_fd_builder, fd_list, opt_sandbox_expose_path_ro_try, home_realpath, flatpak_id, TRUE))
         return 1;
 
       g_variant_builder_add (&options_builder, "{s@v}", "sandbox-expose-fd-ro",
