@@ -743,7 +743,7 @@ main (int    argc,
     {
       if (opt_host)
         {
-          g_printerr ("--host not compatible with --expose-pids");
+          g_printerr ("--host not compatible with --expose-pids\n");
           return 1;
         }
 
@@ -757,7 +757,7 @@ main (int    argc,
     {
       if (opt_host)
         {
-          g_printerr ("--host not compatible with --latest-version");
+          g_printerr ("--host not compatible with --latest-version\n");
           return 1;
         }
       spawn_flags |= FLATPAK_SPAWN_FLAGS_LATEST_VERSION;
@@ -767,7 +767,7 @@ main (int    argc,
     {
       if (opt_host)
         {
-          g_printerr ("--host not compatible with --sandbox");
+          g_printerr ("--host not compatible with --sandbox\n");
           return 1;
         }
       spawn_flags |= FLATPAK_SPAWN_FLAGS_SANDBOX;
@@ -777,7 +777,7 @@ main (int    argc,
     {
       if (opt_host)
         {
-          g_printerr ("--host not compatible with --no-network");
+          g_printerr ("--host not compatible with --no-network\n");
           return 1;
         }
       spawn_flags |= FLATPAK_SPAWN_FLAGS_NO_NETWORK;
@@ -789,7 +789,7 @@ main (int    argc,
     {
       if (opt_host)
         {
-          g_printerr ("--host not compatible with --sandbox-expose");
+          g_printerr ("--host not compatible with --sandbox-expose\n");
           return 1;
         }
       g_variant_builder_add (&options_builder, "{s@v}", "sandbox-expose",
@@ -800,7 +800,7 @@ main (int    argc,
     {
       if (opt_host)
         {
-          g_printerr ("--host not compatible with --sandbox-expose-ro");
+          g_printerr ("--host not compatible with --sandbox-expose-ro\n");
           return 1;
         }
       g_variant_builder_add (&options_builder, "{s@v}", "sandbox-expose-ro",
