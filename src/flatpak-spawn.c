@@ -929,7 +929,10 @@ main (int    argc,
     {
       g_hash_table_iter_init (&iter, opt_unsetenv);
 
-      if (0)  /* TODO: Add API to flatpak-portal to do this */
+      /* The host portal doesn't support options, so we always have to do
+       * this the hard way. The subsandbox portal supports unset-env in
+       * versions >= 5. */
+      if (opt_host ? FALSE : (get_portal_version () >= 5))
         {
           GVariantBuilder strv_builder;
 
