@@ -534,6 +534,107 @@ add_paths_to_variant (GVariantBuilder *builder, GUnixFDList *fd_list, const GStr
   return TRUE;
 }
 
+static GHashTable *opt_env = NULL;
+
+static gboolean
+opt_env_cb (G_GNUC_UNUSED const char *option_name,
+            const gchar *value,
+            G_GNUC_UNUSED gpointer data,
+            GError **error)
+{
+  g_auto(GStrv) split = g_strsplit (value, "=", 2);
+
+  g_assert (opt_env != NULL);
+
+  if (split == NULL ||
+      split[0] == NULL ||
+      split[0][0] == 0 ||
+      split[1] == NULL)
+    {
+      g_set_error (error, G_OPTION_ERROR, G_OPTION_ERROR_BAD_VALUE,
+                   "Invalid env format %s", value);
+      return FALSE;
+    }
+
+  g_hash_table_replace (opt_env,
+                        g_steal_pointer (&split[0]),
+                        g_steal_pointer (&split[1]));
+  return TRUE;
+}
+
+static gboolean
+option_env_fd_cb (G_GNUC_UNUSED const gchar *option_name,
+                  const gchar *value,
+                  G_GNUC_UNUSED gpointer data,
+                  GError **error)
+{
+  g_autofree gchar *proc_filename = NULL;
+  g_autofree gchar *env_block = NULL;
+  gsize remaining;
+  const char *p;
+  guint64 fd;
+  gchar *endptr;
+
+  g_assert (opt_env != NULL);
+
+  fd = g_ascii_strtoull (value, &endptr, 10);
+
+  if (endptr == NULL || *endptr != '\0' || fd > G_MAXINT)
+    {
+      g_set_error (error, G_OPTION_ERROR, G_OPTION_ERROR_BAD_VALUE,
+                   "Not a valid file descriptor: %s", value);
+      return FALSE;
+    }
+
+  proc_filename = g_strdup_printf ("/proc/self/fd/%d", (int) fd);
+
+  if (!g_file_get_contents (proc_filename, &env_block, &remaining, error))
+    return FALSE;
+
+  p = env_block;
+
+  while (remaining > 0)
+    {
+      g_autofree gchar *var = NULL;
+      g_autofree gchar *val = NULL;
+      size_t len = strnlen (p, remaining);
+      const char *equals;
+
+      g_assert (len <= remaining);
+
+      equals = memchr (p, '=', len);
+
+      if (equals == NULL || equals == p)
+        {
+          g_set_error (error, G_OPTION_ERROR, G_OPTION_ERROR_BAD_VALUE,
+                       "Environment variable must be given in the form VARIABLE=VALUE, not %.*s",
+                       (int) len, p);
+          return FALSE;
+        }
+
+      var = g_strndup (p, equals - p);
+      val = g_strndup (equals + 1, len - (equals - p) - 1);
+      g_hash_table_replace (opt_env,
+                            g_steal_pointer (&var),
+                            g_steal_pointer (&val));
+
+      p += len;
+      remaining -= len;
+
+      if (remaining > 0)
+        {
+          g_assert (*p == '\0');
+          p += 1;
+          remaining -= 1;
+        }
+    }
+
+  if (fd >= 3)
+    close (fd);
+
+  return TRUE;
+}
+
 int
 main (int    argc,
       char **argv)
@@ -545,7 +646,6 @@ main (int    argc,
   int i, opt_argc;
   gboolean verbose = FALSE;
   char **forward_fds = NULL;
-  char **opt_envs = NULL;
   guint spawn_flags;
   gboolean opt_clear_env = FALSE;
   gboolean opt_watch_bus = FALSE;
@@ -570,7 +670,8 @@ main (int    argc,
     { "watch-bus", 0, 0, G_OPTION_ARG_NONE, &opt_watch_bus,  "Make the spawned command exit if we do", NULL },
     { "expose-pids", 0, 0, G_OPTION_ARG_NONE, &opt_expose_pids, "Expose sandbox pid in calling sandbox", NULL },
     { "share-pids", 0, 0, G_OPTION_ARG_NONE, &opt_share_pids, "Use same pid namespace as calling sandbox", NULL },
-    { "env", 0, 0, G_OPTION_ARG_STRING_ARRAY, &opt_envs, "Set environment variable", "VAR=VALUE" },
+    { "env", 0, 0, G_OPTION_ARG_CALLBACK, &opt_env_cb, "Set environment variable", "VAR=VALUE" },
+    { "env-fd", 0, 0, G_OPTION_ARG_CALLBACK, &option_env_fd_cb, "Read environment variables in env -0 format from FD", "FD" },
     { "latest-version", 0, 0, G_OPTION_ARG_NONE, &opt_latest_version,  "Run latest version", NULL },
     { "sandbox", 0, 0, G_OPTION_ARG_NONE, &opt_sandbox,  "Run sandboxed", NULL },
     { "no-network", 0, 0, G_OPTION_ARG_NONE, &opt_no_network,  "Run without network access", NULL },
@@ -586,6 +687,8 @@ main (int    argc,
     { NULL }
   };
   guint signal_source = 0;
+  GHashTableIter iter;
+  gpointer key, value;
 
   setlocale (LC_ALL, "");
 
@@ -602,6 +705,7 @@ main (int    argc,
     i++;
 
   opt_argc = i;
+  opt_env = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_free);
 
   while (i < argc)
     {
@@ -726,18 +830,12 @@ main (int    argc,
       g_variant_builder_add (fd_builder, "{uh}", fd, handle);
     }
 
-  for (i = 0; opt_envs != NULL && opt_envs[i] != NULL; i++)
-    {
-      const char *opt_env = opt_envs[i];
-      g_auto(GStrv) split = g_strsplit (opt_env, "=", 2);
+  g_hash_table_iter_init (&iter, opt_env);
 
-      if (split == NULL || split[0] == NULL || split[0][0] == 0 || split[1] == NULL)
-        {
-          g_printerr ("Invalid env format %s\n", opt_env);
-          return 1;
-        }
-      g_variant_builder_add (env_builder, "{ss}", split[0], split[1]);
-    }
+  while (g_hash_table_iter_next (&iter, &key, &value))
+    g_variant_builder_add (env_builder, "{ss}", key, value);
+
+  g_clear_pointer (&opt_env, g_hash_table_unref);
 
   spawn_flags = 0;
 
