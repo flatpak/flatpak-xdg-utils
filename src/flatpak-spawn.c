@@ -46,6 +46,8 @@ typedef enum {
   FLATPAK_SPAWN_FLAGS_NO_NETWORK = 1 << 3,
   FLATPAK_SPAWN_FLAGS_WATCH_BUS = 1 << 4, /* Since 1.2 */
   FLATPAK_SPAWN_FLAGS_EXPOSE_PIDS = 1 << 5, /* Since 1.6, optional */
+  FLATPAK_SPAWN_FLAGS_NOTIFY_START = 1 << 6,
+  FLATPAK_SPAWN_FLAGS_SHARE_PIDS = 1 << 7,
 } FlatpakSpawnFlags;
 
 typedef enum {
@@ -66,6 +68,10 @@ typedef enum {
 typedef enum {
   FLATPAK_SPAWN_SUPPORT_FLAGS_EXPOSE_PIDS = 1 << 0,
 } FlatpakSpawnSupportFlags;
+
+/* The same flag is reused: this feature is available under the same
+ * circumstances */
+#define FLATPAK_SPAWN_SUPPORT_FLAGS_SHARE_PIDS FLATPAK_SPAWN_SUPPORT_FLAGS_EXPOSE_PIDS
 
 static GDBusConnection *session_bus = NULL;
 
@@ -544,6 +550,7 @@ main (int    argc,
   gboolean opt_clear_env = FALSE;
   gboolean opt_watch_bus = FALSE;
   gboolean opt_expose_pids = FALSE;
+  gboolean opt_share_pids = FALSE;
   gboolean opt_latest_version = FALSE;
   gboolean opt_sandbox = FALSE;
   gboolean opt_no_network = FALSE;
@@ -562,6 +569,7 @@ main (int    argc,
     { "clear-env", 0, 0, G_OPTION_ARG_NONE, &opt_clear_env,  "Run with clean environment", NULL },
     { "watch-bus", 0, 0, G_OPTION_ARG_NONE, &opt_watch_bus,  "Make the spawned command exit if we do", NULL },
     { "expose-pids", 0, 0, G_OPTION_ARG_NONE, &opt_expose_pids, "Expose sandbox pid in calling sandbox", NULL },
+    { "share-pids", 0, 0, G_OPTION_ARG_NONE, &opt_share_pids, "Use same pid namespace as calling sandbox", NULL },
     { "env", 0, 0, G_OPTION_ARG_STRING_ARRAY, &opt_envs, "Set environment variable", "VAR=VALUE" },
     { "latest-version", 0, 0, G_OPTION_ARG_NONE, &opt_latest_version,  "Run latest version", NULL },
     { "sandbox", 0, 0, G_OPTION_ARG_NONE, &opt_sandbox,  "Run sandboxed", NULL },
@@ -739,7 +747,20 @@ main (int    argc,
   if (opt_watch_bus)
     spawn_flags |= opt_host ? FLATPAK_HOST_COMMAND_FLAGS_WATCH_BUS : FLATPAK_SPAWN_FLAGS_WATCH_BUS;
 
-  if (opt_expose_pids)
+  if (opt_share_pids)
+    {
+      if (opt_host)
+        {
+          g_printerr ("--host not compatible with --share-pids\n");
+          return 1;
+        }
+
+      check_portal_version ("share-pids", 5);
+      check_portal_supports ("share-pids", FLATPAK_SPAWN_SUPPORT_FLAGS_SHARE_PIDS);
+
+      spawn_flags |= FLATPAK_SPAWN_FLAGS_SHARE_PIDS;
+    }
+  else if (opt_expose_pids)
     {
       if (opt_host)
         {
