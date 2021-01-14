@@ -535,6 +535,7 @@ add_paths_to_variant (GVariantBuilder *builder, GUnixFDList *fd_list, const GStr
 }
 
 static GHashTable *opt_env = NULL;
+static GHashTable *opt_unsetenv = NULL;
 
 static gboolean
 opt_env_cb (G_GNUC_UNUSED const char *option_name,
@@ -545,6 +546,7 @@ opt_env_cb (G_GNUC_UNUSED const char *option_name,
   g_auto(GStrv) split = g_strsplit (value, "=", 2);
 
   g_assert (opt_env != NULL);
+  g_assert (opt_unsetenv != NULL);
 
   if (split == NULL ||
       split[0] == NULL ||
@@ -556,9 +558,24 @@ opt_env_cb (G_GNUC_UNUSED const char *option_name,
       return FALSE;
     }
 
+  g_hash_table_remove (opt_unsetenv, split[0]);
   g_hash_table_replace (opt_env,
                         g_steal_pointer (&split[0]),
                         g_steal_pointer (&split[1]));
+  return TRUE;
+}
+
+static gboolean
+opt_unset_env_cb (G_GNUC_UNUSED const char *option_name,
+                  const gchar *value,
+                  G_GNUC_UNUSED gpointer data,
+                  G_GNUC_UNUSED GError **error)
+{
+  g_assert (opt_env != NULL);
+  g_assert (opt_unsetenv != NULL);
+
+  g_hash_table_remove (opt_env, value);
+  g_hash_table_add (opt_unsetenv, g_strdup (value));
   return TRUE;
 }
 
@@ -576,6 +593,7 @@ option_env_fd_cb (G_GNUC_UNUSED const gchar *option_name,
   gchar *endptr;
 
   g_assert (opt_env != NULL);
+  g_assert (opt_unsetenv != NULL);
 
   fd = g_ascii_strtoull (value, &endptr, 10);
 
@@ -614,6 +632,7 @@ option_env_fd_cb (G_GNUC_UNUSED const gchar *option_name,
 
       var = g_strndup (p, equals - p);
       val = g_strndup (equals + 1, len - (equals - p) - 1);
+      g_hash_table_remove (opt_unsetenv, var);
       g_hash_table_replace (opt_env,
                             g_steal_pointer (&var),
                             g_steal_pointer (&val));
@@ -671,6 +690,7 @@ main (int    argc,
     { "expose-pids", 0, 0, G_OPTION_ARG_NONE, &opt_expose_pids, "Expose sandbox pid in calling sandbox", NULL },
     { "share-pids", 0, 0, G_OPTION_ARG_NONE, &opt_share_pids, "Use same pid namespace as calling sandbox", NULL },
     { "env", 0, 0, G_OPTION_ARG_CALLBACK, &opt_env_cb, "Set environment variable", "VAR=VALUE" },
+    { "unset-env", 0, 0, G_OPTION_ARG_CALLBACK, &opt_unset_env_cb, "Unset environment variable", "VAR=VALUE" },
     { "env-fd", 0, 0, G_OPTION_ARG_CALLBACK, &option_env_fd_cb, "Read environment variables in env -0 format from FD", "FD" },
     { "latest-version", 0, 0, G_OPTION_ARG_NONE, &opt_latest_version,  "Run latest version", NULL },
     { "sandbox", 0, 0, G_OPTION_ARG_NONE, &opt_sandbox,  "Run sandboxed", NULL },
@@ -706,6 +726,7 @@ main (int    argc,
 
   opt_argc = i;
   opt_env = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_free);
+  opt_unsetenv = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
 
   while (i < argc)
     {
@@ -903,6 +924,58 @@ main (int    argc,
     }
 
   g_variant_builder_init (&options_builder, G_VARIANT_TYPE ("a{sv}"));
+
+  if (g_hash_table_size (opt_unsetenv) > 0)
+    {
+      g_hash_table_iter_init (&iter, opt_unsetenv);
+
+      /* The host portal doesn't support options, so we always have to do
+       * this the hard way. The subsandbox portal supports unset-env in
+       * versions >= 5. */
+      if (opt_host ? FALSE : (get_portal_version () >= 5))
+        {
+          GVariantBuilder strv_builder;
+
+          g_variant_builder_init (&strv_builder, G_VARIANT_TYPE_STRING_ARRAY);
+
+          while (g_hash_table_iter_next (&iter, &key, NULL))
+            g_variant_builder_add (&strv_builder, "s", key);
+
+          g_variant_builder_add (&options_builder, "{s@v}", "unset-env",
+                                 g_variant_new_variant (g_variant_builder_end (&strv_builder)));
+        }
+      else
+        {
+          /* env(1) will do the wrong thing if argv[0] contains an equals
+           * sign, so we might need to prepend this incantation - and
+           * because we're prepending, we need to do it backwards.
+           * More legibly, we're replacing MY=COMMAND ARGS with:
+           *
+           *     /usr/bin/env -u VAR -u VAR2 /bin/sh -euc 'exec "$@"' sh MY=COMMAND ARGS
+           *
+           * This is a standard trick for dealing with env(1). */
+          g_assert (child_argv->len >= 1);
+
+          if (strchr (g_ptr_array_index (child_argv, 0), '=') != NULL)
+            {
+              g_ptr_array_insert (child_argv, 0, g_strdup ("sh"));  /* argv[0] */
+              g_ptr_array_insert (child_argv, 0, g_strdup ("exec \"$@\""));
+              g_ptr_array_insert (child_argv, 0, g_strdup ("-euc"));
+              g_ptr_array_insert (child_argv, 0, g_strdup ("/bin/sh"));
+            }
+
+          while (g_hash_table_iter_next (&iter, &key, NULL))
+            {
+              /* Again, yes, this is backwards: we're prepending. */
+              g_ptr_array_insert (child_argv, 0, g_strdup (key));
+              g_ptr_array_insert (child_argv, 0, g_strdup ("-u"));
+            }
+
+          g_ptr_array_insert (child_argv, 0, g_strdup ("/usr/bin/env"));
+        }
+    }
+
+  g_clear_pointer (&opt_unsetenv, g_hash_table_unref);
 
   if (opt_sandbox_expose)
     {
