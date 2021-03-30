@@ -26,6 +26,8 @@
 #include <fcntl.h>
 #include <errno.h>
 
+#include "backport-autoptr.h"
+
 #define PORTAL_BUS_NAME    "org.freedesktop.portal.Desktop"
 #define PORTAL_OBJECT_PATH "/org/freedesktop/portal/desktop"
 #define PORTAL_IFACE_NAME  "org.freedesktop.portal.OpenURI"
@@ -46,11 +48,12 @@ static GOptionEntry entries[] = {
 int
 main (int argc, char *argv[])
 {
-  GOptionContext *context;
-  GError *error = NULL;
-  GDBusConnection *connection;
+  g_autoptr(GOptionContext) context = NULL;
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GDBusConnection) connection = NULL;
+  g_autoptr(GFile) file = NULL;
+  g_autoptr(GVariant) reply = NULL;
   GVariantBuilder opt_builder;
-  GFile *file;
 
   context = g_option_context_new ("{ file | URL }");
 
@@ -63,7 +66,6 @@ main (int argc, char *argv[])
       g_printerr ("\n");
       g_printerr ("Try \"%s --help\" for more information.\n", g_get_prgname ());
 
-      g_error_free (error);
       return 1;
     }
 
@@ -76,10 +78,9 @@ main (int argc, char *argv[])
 
   if (show_help || uris == NULL || g_strv_length (uris) > 1)
     {
-      char *help = g_option_context_get_help (context, TRUE, NULL);
+      g_autofree gchar *help = g_option_context_get_help (context, TRUE, NULL);
       g_print ("%s\n", help);
 
-      g_free (help);
       return 0;
     }
 
@@ -92,7 +93,6 @@ main (int argc, char *argv[])
       else
         g_printerr ("Failed to connect to session bus");
 
-      g_clear_pointer (&error, g_error_free);
       return 3;
     }
 
@@ -101,69 +101,61 @@ main (int argc, char *argv[])
   file = g_file_new_for_commandline_arg (uris[0]);
   if (g_file_is_native (file))
     {
-      char *path;
+      g_autofree gchar *path = NULL;
       int fd;
-      GUnixFDList *fd_list;
+      g_autoptr(GUnixFDList) fd_list = NULL;
 
       path = g_file_get_path (file);
       fd = open (path, O_RDONLY | O_CLOEXEC);
       if (fd == -1)
         {
           g_printerr ("Failed to open '%s': %s", path, g_strerror (errno));
+          g_variant_unref (g_variant_builder_end (&opt_builder));
           return 5;
         }
 
       fd_list = g_unix_fd_list_new_from_array (&fd, 1);
       fd = -1;
 
-      g_dbus_connection_call_with_unix_fd_list_sync (connection,
-                                                     PORTAL_BUS_NAME,
-                                                     PORTAL_OBJECT_PATH,
-                                                     PORTAL_IFACE_NAME,
-                                                     "OpenFile",
-                                                     g_variant_new ("(sh@a{sv})",
-                                                                    "", 0,
-                                                                    g_variant_builder_end (&opt_builder)),
-                                                     NULL,
-                                                     G_DBUS_CALL_FLAGS_NONE,
-                                                     -1,
-                                                     fd_list,
-                                                     NULL,
-                                                     NULL,
-                                                     &error);
-
-      g_object_unref (fd_list);
-      g_free (path);
+      reply = g_dbus_connection_call_with_unix_fd_list_sync (connection,
+                                                             PORTAL_BUS_NAME,
+                                                             PORTAL_OBJECT_PATH,
+                                                             PORTAL_IFACE_NAME,
+                                                             "OpenFile",
+                                                             g_variant_new ("(sh@a{sv})",
+                                                                            "", 0,
+                                                                            g_variant_builder_end (&opt_builder)),
+                                                             NULL,
+                                                             G_DBUS_CALL_FLAGS_NONE,
+                                                             -1,
+                                                             fd_list,
+                                                             NULL,
+                                                             NULL,
+                                                             &error);
     }
   else
     {
-      g_dbus_connection_call_sync (connection,
-                                   PORTAL_BUS_NAME,
-                                   PORTAL_OBJECT_PATH,
-                                   PORTAL_IFACE_NAME,
-                                   "OpenURI",
-                                   g_variant_new ("(ss@a{sv})",
-                                                  "", uris[0],
-                                                  g_variant_builder_end (&opt_builder)),
-                                   NULL,
-                                   G_DBUS_CALL_FLAGS_NONE,
-                                   -1,
-                                   NULL,
-                                   &error);
+      reply = g_dbus_connection_call_sync (connection,
+                                           PORTAL_BUS_NAME,
+                                           PORTAL_OBJECT_PATH,
+                                           PORTAL_IFACE_NAME,
+                                           "OpenURI",
+                                           g_variant_new ("(ss@a{sv})",
+                                                          "", uris[0],
+                                                          g_variant_builder_end (&opt_builder)),
+                                           NULL,
+                                           G_DBUS_CALL_FLAGS_NONE,
+                                           -1,
+                                           NULL,
+                                           &error);
     }
 
   if (error)
     {
       g_printerr ("Failed to call portal: %s\n", error->message);
 
-      g_object_unref (connection);
-      g_error_free (error);
-
       return 4;
     }
-
-  g_object_unref (connection);
-  g_object_unref (file);
 
   return 0;
 }
