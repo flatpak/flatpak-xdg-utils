@@ -3,6 +3,7 @@ test_env.set('G_DEBUG', 'gc-friendly,fatal-criticals')
 test_env.set('G_TEST_SRCDIR', meson.current_source_dir())
 test_env.set('G_TEST_BUILDDIR', meson.current_build_dir())
 test_env.set('GIO_USE_VFS', 'local')
+test_env.set('FLATPAK_SPAWN', flatpak_spawn.full_path())
 test_env.set('XDG_EMAIL', xdg_email.full_path())
 test_env.set('XDG_OPEN', xdg_open.full_path())
 test_env.set('MALLOC_CHECK_', '2')
@@ -10,6 +11,7 @@ test_env.set('MALLOC_CHECK_', '2')
 tests = [
   'test-email',
   'test-open',
+  'test-spawn',
 ]
 
 test_timeout = 60
