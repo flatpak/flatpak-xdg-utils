@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  - push
+  - pull_request
+
+jobs:
+  check:
+    name: Build with gcc and test
+    runs-on: ubuntu-20.04
+    steps:
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y dbus libglib2.0-dev meson
+    - name: Check out
+      uses: actions/checkout@v1
+    - name: Configure
+      run: meson -Db_sanitize=address,undefined _build
+    - name: Build
+      run: ninja -C _build
+    - name: Test
+      run: meson test -C _build -v
+      env:
+        ASAN_OPTIONS: detect_leaks=0 # Right now we're not fully clean, but this gets us use-after-free etc
+    - name: Upload test logs
+      uses: actions/upload-artifact@v1
+      if: failure() || cancelled()
+      with:
+        name: logs
+        path: _build/meson-logs
