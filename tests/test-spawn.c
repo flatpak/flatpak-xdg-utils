@@ -74,7 +74,10 @@ typedef struct
   FlatpakSpawnFlags subsandbox_flags;
   FlatpakSpawnSandboxFlags subsandbox_sandbox_flags;
   FlatpakSpawnSupportFlags portal_supports;
+  const char *app_path;
+  const char *usr_path;
   int fails_immediately;
+  int fails_after_version_check;
   gboolean awkward_command_name;
   gboolean dbus_call_fails;
   gboolean extra;
@@ -610,9 +613,20 @@ test_command (Fixture *f,
 
       if (config->subsandbox_flags & FLATPAK_SPAWN_FLAGS_SHARE_PIDS)
         g_ptr_array_add (command, g_strdup ("--share-pids"));
+    }
 
-      if (config->subsandbox_flags & FLATPAK_SPAWN_FLAGS_EMPTY_APP)
-        g_assert_not_reached ();  /* TODO: unimplemented */
+  if (config->app_path != NULL)
+    {
+      g_ptr_array_add (command, g_strdup_printf ("--app-path=%s", config->app_path));
+
+      if (config->app_path[0] != '\0')
+        n_fds_for_options++;
+    }
+
+  if (config->usr_path != NULL)
+    {
+      g_ptr_array_add (command, g_strdup_printf ("--usr-path=%s", config->usr_path));
+      n_fds_for_options++;
     }
 
   /* Generic "extra complexity" options */
@@ -664,11 +678,38 @@ test_command (Fixture *f,
       return;
     }
 
+  if (config->fails_after_version_check)
+    {
+      g_autoptr(GAsyncResult) result = NULL;
+
+      g_subprocess_wait_check_async (f->flatpak_spawn, NULL,
+                                     store_result_cb, &result);
+
+      while (result == NULL)
+        g_main_context_iteration (NULL, TRUE);
+
+      g_subprocess_wait_check_finish (f->flatpak_spawn, result, &error);
+      g_assert_error (error, G_SPAWN_EXIT_ERROR, config->fails_after_version_check);
+
+      /* Make sure we didn't wait for the entire 25 second D-Bus timeout */
+      g_assert_cmpfloat (g_test_timer_elapsed (), <=, 20);
+
+      g_test_minimized_result (g_test_timer_elapsed (),
+                               "time to fail after version check: %.1f",
+                               g_test_timer_elapsed ());
+
+      g_assert_cmpuint (g_queue_get_length (&f->invocations), ==, 0);
+      return;
+    }
+
   while (g_queue_get_length (&f->invocations) < 1)
     g_main_context_iteration (NULL, TRUE);
 
   g_assert_cmpuint (g_queue_get_length (&f->invocations), ==, 1);
   invocation = g_queue_pop_head (&f->invocations);
+  message = g_dbus_method_invocation_get_message (invocation);
+  fd_list = g_dbus_message_get_unix_fd_list (message);
+  fds = g_unix_fd_list_peek_fds (fd_list, NULL);
 
   if (config->host)
     {
@@ -824,16 +865,43 @@ test_command (Fixture *f,
           options_handled++;
         }
 
+      if (config->app_path != NULL && config->app_path[0] != '\0')
+        {
+          struct stat expected, got;
+          gint32 handle;
+
+          g_assert_no_errno (stat (config->app_path, &expected));
+          g_assert_true (g_variant_lookup (options_variant, "app-fd", "h", &handle));
+          g_assert_cmpint (handle, >=, 0);
+          g_assert_cmpint (handle, <, g_unix_fd_list_get_length (fd_list));
+          g_assert_no_errno (fstat (fds[handle], &got));
+          g_assert_cmpint (expected.st_dev, ==, got.st_dev);
+          g_assert_cmpint (expected.st_ino, ==, got.st_ino);
+          options_handled++;
+        }
+
+      if (config->usr_path != NULL)
+        {
+          struct stat expected, got;
+          gint32 handle;
+
+          g_assert_no_errno (stat (config->usr_path, &expected));
+          g_assert_true (g_variant_lookup (options_variant, "usr-fd", "h", &handle));
+          g_assert_cmpint (handle, >=, 0);
+          g_assert_cmpint (handle, <, g_unix_fd_list_get_length (fd_list));
+          g_assert_no_errno (fstat (fds[handle], &got));
+          g_assert_cmpint (expected.st_dev, ==, got.st_dev);
+          g_assert_cmpint (expected.st_ino, ==, got.st_ino);
+          options_handled++;
+        }
+
       g_assert_cmpuint (g_variant_n_children (options_variant), ==, options_handled);
     }
 
-  message = g_dbus_method_invocation_get_message (invocation);
   /* it carries stdin, stdout, stderr, and maybe fd 4 */
   g_assert_cmpuint (g_dbus_message_get_num_unix_fds (message), ==,
                     g_variant_n_children (fds_variant) +
                     n_fds_for_options);
-  fd_list = g_dbus_message_get_unix_fd_list (message);
-  fds = g_unix_fd_list_peek_fds (fd_list, NULL);
   for (i = 0; i < g_variant_n_children (fds_variant) + n_fds_for_options; i++)
     g_assert_cmpint (fds[i], >=, 0);
   g_assert_cmpint (fds[i], ==, -1);
@@ -970,6 +1038,17 @@ static const Config subsandbox_complex =
 {
   .awkward_command_name = TRUE,
   .extra = TRUE,
+  /* This is obviously not a realistic thing to put at /app, but it needs
+   * to be something that will certainly exist on the host system! */
+  .app_path = "/dev",
+  /* Similar */
+  .usr_path = "/",
+};
+
+static const Config subsandbox_empty_app =
+{
+  .subsandbox_flags = FLATPAK_SPAWN_FLAGS_EMPTY_APP,
+  .app_path = "",
 };
 
 static const Config subsandbox_clear_env =
@@ -1111,6 +1190,24 @@ static const Config fail_no_session_bus =
   .no_session_bus = TRUE,
 };
 
+static const Config fail_no_usr_path =
+{
+  .fails_after_version_check = 1,
+  .usr_path = "",
+};
+
+static const Config fail_nonexistent_app_path =
+{
+  .fails_after_version_check = 1,
+  .app_path = "/nonexistent",
+};
+
+static const Config fail_nonexistent_usr_path =
+{
+  .fails_after_version_check = 1,
+  .usr_path = "/nonexistent",
+};
+
 static const Config host_cannot[] =
 {
   { .fails_immediately = 1, .host = TRUE, .extra_arg = "--expose-pids" },
@@ -1123,6 +1220,9 @@ static const Config host_cannot[] =
   { .fails_immediately = 1, .host = TRUE, .extra_arg = "--sandbox-expose-ro=/" },
   { .fails_immediately = 1, .host = TRUE, .extra_arg = "--sandbox-flag=1" },
   { .fails_immediately = 1, .host = TRUE, .extra_arg = "--share-pids" },
+  { .fails_immediately = 1, .host = TRUE, .extra_arg = "--app-path=" },
+  { .fails_immediately = 1, .host = TRUE, .extra_arg = "--app-path=/" },
+  { .fails_immediately = 1, .host = TRUE, .extra_arg = "--usr-path=/" },
 };
 
 int
@@ -1143,6 +1243,7 @@ main (int argc,
   g_test_add ("/subsandbox/simple", Fixture, &default_config, setup, test_command, teardown);
   g_test_add ("/subsandbox/clear-env", Fixture, &subsandbox_clear_env, setup, test_command, teardown);
   g_test_add ("/subsandbox/complex", Fixture, &subsandbox_complex, setup, test_command, teardown);
+  g_test_add ("/subsandbox/empty_app", Fixture, &subsandbox_empty_app, setup, test_command, teardown);
   g_test_add ("/subsandbox/expose-pids", Fixture, &subsandbox_expose_pids, setup, test_command, teardown);
   g_test_add ("/subsandbox/fails", Fixture, &subsandbox_fails, setup, test_command, teardown);
   g_test_add ("/subsandbox/latest", Fixture, &subsandbox_latest, setup, test_command, teardown);
@@ -1160,6 +1261,9 @@ main (int argc,
   g_test_add ("/fail/invalid-sandbox-flag2", Fixture, &fail_invalid_sandbox_flag2, setup, test_command, teardown);
   g_test_add ("/fail/no-command", Fixture, &fail_no_command, setup, test_command, teardown);
   g_test_add ("/fail/no-session-bus", Fixture, &fail_no_session_bus, setup, test_command, teardown);
+  g_test_add ("/fail/no-usr-path", Fixture, &fail_no_usr_path, setup, test_command, teardown);
+  g_test_add ("/fail/nonexistent-app-path", Fixture, &fail_nonexistent_app_path, setup, test_command, teardown);
+  g_test_add ("/fail/nonexistent-usr-path", Fixture, &fail_nonexistent_usr_path, setup, test_command, teardown);
 
   for (i = 0; i < G_N_ELEMENTS (host_cannot); i++)
     {
