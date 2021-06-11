@@ -35,3 +35,9 @@ void setup_dbus_daemon (GSubprocess **dbus_daemon,
                         gchar       **dbus_address);
 void own_name_sync (GDBusConnection *conn,
                     const char *name);
+void store_result_cb (GObject *source, GAsyncResult *res, gpointer data);
+
+#ifndef g_assert_no_errno
+#define g_assert_no_errno(expr) \
+  g_assert_cmpstr ((expr) >= 0 ? NULL : g_strerror (errno), ==, NULL)
+#endif

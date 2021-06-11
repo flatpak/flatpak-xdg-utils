@@ -97,3 +97,17 @@ own_name_sync (GDBusConnection *conn,
   g_variant_get (variant, "(u)", &result);
   g_assert_cmpuint (result, ==, DBUS_REQUEST_NAME_REPLY_PRIMARY_OWNER);
 }
+
+/* A GAsyncReadyCallback that stores @res via a `GAsyncResult **`. */
+void
+store_result_cb (G_GNUC_UNUSED GObject *source,
+                 GAsyncResult *res,
+                 gpointer data)
+{
+  GAsyncResult **res_p = data;
+
+  g_assert_nonnull (res_p);
+  g_assert_null (*res_p);
+  g_assert_true (G_IS_ASYNC_RESULT (res));
+  *res_p = g_object_ref (res);
+}
