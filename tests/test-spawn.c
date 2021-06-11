@@ -770,6 +770,8 @@ test_command (Fixture *f,
     }
   else
     {
+      guint options_handled = 0;
+
       g_assert_cmpuint (flags, ==, config->subsandbox_flags);
       g_assert_cmpstr (g_variant_get_type_string (options_variant), ==, "a{sv}");
 
@@ -777,38 +779,52 @@ test_command (Fixture *f,
         {
           g_autofree const char **expose = NULL;
           g_autofree const char **ro = NULL;
+          GVariantIter *handles_iter;
 
-          g_assert_cmpuint (g_variant_n_children (options_variant), ==, 5);
           g_assert_true (g_variant_lookup (options_variant, "sandbox-expose", "^a&s", &expose));
           g_assert_nonnull (expose);
           i = 0;
           g_assert_cmpstr (expose[i++], ==, "/foo");
           g_assert_cmpstr (expose[i++], ==, "/bar");
           g_assert_cmpstr (expose[i++], ==, NULL);
+          options_handled++;
+
           g_assert_true (g_variant_lookup (options_variant, "sandbox-expose-ro", "^a&s", &ro));
           g_assert_nonnull (ro);
           i = 0;
           g_assert_cmpstr (ro[i++], ==, "/proc");
           g_assert_cmpstr (ro[i++], ==, "/sys");
           g_assert_cmpstr (ro[i++], ==, NULL);
+          options_handled++;
+
           g_assert_true (g_variant_lookup (options_variant, "sandbox-flags", "u", &flags));
           g_assert_cmpuint (flags, ==, config->subsandbox_sandbox_flags);
+          options_handled++;
+
+          g_assert_true (g_variant_lookup (options_variant, "sandbox-expose-fd", "ah", &handles_iter));
+          g_assert_nonnull (handles_iter);
+          g_variant_iter_free (handles_iter);
+          options_handled++;
+
+          g_assert_true (g_variant_lookup (options_variant, "sandbox-expose-fd-ro", "ah", &handles_iter));
+          g_assert_nonnull (handles_iter);
+          g_variant_iter_free (handles_iter);
+          options_handled++;
         }
-      else if (config->extra)
+
+      if (config->extra)
         {
           g_autofree const char **unset = NULL;
 
-          g_assert_cmpuint (g_variant_n_children (options_variant), ==, 1);
           g_assert_true (g_variant_lookup (options_variant, "unset-env", "^a&s", &unset));
           g_assert_nonnull (unset);
           i = 0;
           g_assert_cmpstr (unset[i++], ==, "NOPE");
           g_assert_cmpstr (unset[i++], ==, NULL);
+          options_handled++;
         }
-      else
-        {
-          g_assert_cmpuint (g_variant_n_children (options_variant), ==, 0);
-        }
+
+      g_assert_cmpuint (g_variant_n_children (options_variant), ==, options_handled);
     }
 
   message = g_dbus_method_invocation_get_message (invocation);
