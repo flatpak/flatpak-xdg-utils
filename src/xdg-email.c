@@ -385,7 +385,7 @@ main (int argc, char *argv[])
 
       g_variant_builder_add (&opt_builder,
                              "{sv}",
-                             "attachments", g_variant_new_parsed ("[0]"));
+                             "attachment_fds", g_variant_new_parsed ("@ah [0]"));
     }
 
   parameters = g_variant_new ("(s@a{sv})",
