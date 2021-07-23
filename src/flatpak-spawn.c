@@ -519,6 +519,7 @@ path_to_handle (GUnixFDList *fd_list,
   if (handle < 0)
     {
       g_prefix_error (error, "Failed to add fd to list for %s: ", path);
+      close (path_fd);
       return -1;
     }
 
