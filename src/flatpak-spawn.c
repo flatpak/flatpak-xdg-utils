@@ -487,6 +487,17 @@ get_portal_supports (void)
   return supports;
 }
 
+#define NOT_SETUID_ROOT_MESSAGE \
+"This feature requires Flatpak to be using a bubblewrap (bwrap) executable\n" \
+"that is not setuid root.\n" \
+"\n" \
+"The non-setuid version of bubblewrap requires a kernel that allows\n" \
+"unprivileged users to create new user namespaces.\n" \
+"\n" \
+"For more details please see:\n" \
+"https://github.com/flatpak/flatpak/wiki/User-namespace-requirements\n" \
+"\n"
+
 static void
 check_portal_supports (const char *option, guint32 supports_needed)
 {
@@ -495,6 +506,10 @@ check_portal_supports (const char *option, guint32 supports_needed)
   if ((supports & supports_needed) != supports_needed)
     {
       g_printerr ("--%s not supported by host portal\n", option);
+
+      if (supports_needed == FLATPAK_SPAWN_SUPPORT_FLAGS_EXPOSE_PIDS)
+        g_printerr ("\n%s", NOT_SETUID_ROOT_MESSAGE);
+
       exit (1);
     }
 }
