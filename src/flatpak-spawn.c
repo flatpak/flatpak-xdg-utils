@@ -34,47 +34,14 @@
 #include <gio/gunixfdlist.h>
 
 #include "backport-autoptr.h"
+#include "flatpak-portal.h"
+#include "flatpak-session-helper.h"
 
 /* Change to #if 1 to check backwards-compatibility code paths */
 #if 0
 #undef GLIB_CHECK_VERSION
 #define GLIB_CHECK_VERSION(x, y, z) (0)
 #endif
-
-typedef enum {
-  FLATPAK_SPAWN_FLAGS_CLEAR_ENV = 1 << 0,
-  FLATPAK_SPAWN_FLAGS_LATEST_VERSION = 1 << 1,
-  FLATPAK_SPAWN_FLAGS_SANDBOX = 1 << 2,
-  FLATPAK_SPAWN_FLAGS_NO_NETWORK = 1 << 3,
-  FLATPAK_SPAWN_FLAGS_WATCH_BUS = 1 << 4, /* Since 1.2 */
-  FLATPAK_SPAWN_FLAGS_EXPOSE_PIDS = 1 << 5, /* Since 1.6, optional */
-  FLATPAK_SPAWN_FLAGS_NOTIFY_START = 1 << 6,
-  FLATPAK_SPAWN_FLAGS_SHARE_PIDS = 1 << 7,
-  FLATPAK_SPAWN_FLAGS_EMPTY_APP = 1 << 8,
-} FlatpakSpawnFlags;
-
-typedef enum {
-  FLATPAK_HOST_COMMAND_FLAGS_CLEAR_ENV = 1 << 0,
-  FLATPAK_HOST_COMMAND_FLAGS_WATCH_BUS = 1 << 1, /* Since 1.2 */
-} FlatpakHostCommandFlags;
-
-/* Since 1.6 */
-typedef enum {
-  FLATPAK_SPAWN_SANDBOX_FLAGS_SHARE_DISPLAY = 1 << 0,
-  FLATPAK_SPAWN_SANDBOX_FLAGS_SHARE_SOUND = 1 << 1,
-  FLATPAK_SPAWN_SANDBOX_FLAGS_SHARE_GPU = 1 << 2,
-  FLATPAK_SPAWN_SANDBOX_FLAGS_ALLOW_DBUS = 1 << 3,
-  FLATPAK_SPAWN_SANDBOX_FLAGS_ALLOW_A11Y = 1 << 4,
-} FlatpakSpawnSandboxFlags;
-
-/* Since 1.6 */
-typedef enum {
-  FLATPAK_SPAWN_SUPPORT_FLAGS_EXPOSE_PIDS = 1 << 0,
-} FlatpakSpawnSupportFlags;
-
-/* The same flag is reused: this feature is available under the same
- * circumstances */
-#define FLATPAK_SPAWN_SUPPORT_FLAGS_SHARE_PIDS FLATPAK_SPAWN_SUPPORT_FLAGS_EXPOSE_PIDS
 
 static GDBusConnection *session_bus = NULL;
 
@@ -921,15 +888,15 @@ main (int    argc,
 
   if (opt_host)
     {
-      service_iface = "org.freedesktop.Flatpak.Development";
-      service_obj_path = "/org/freedesktop/Flatpak/Development";
-      service_bus_name = "org.freedesktop.Flatpak";
+      service_iface = FLATPAK_SESSION_HELPER_INTERFACE_DEVELOPMENT;
+      service_obj_path = FLATPAK_SESSION_HELPER_PATH_DEVELOPMENT;
+      service_bus_name = FLATPAK_SESSION_HELPER_BUS_NAME;
     }
   else
     {
-      service_iface = "org.freedesktop.portal.Flatpak";
-      service_obj_path = "/org/freedesktop/portal/Flatpak";
-      service_bus_name = "org.freedesktop.portal.Flatpak";
+      service_iface = FLATPAK_PORTAL_INTERFACE;
+      service_obj_path = FLATPAK_PORTAL_PATH;
+      service_bus_name = FLATPAK_PORTAL_BUS_NAME;
     }
 
   g_dbus_connection_signal_subscribe (session_bus,
