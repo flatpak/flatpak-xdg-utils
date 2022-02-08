@@ -1,3 +1,15 @@
+Changes in 1.0.5
+================
+
+
+flatpak-spawn supports --app-path and --usr-path
+flatpak-spawn --sandbox-expose-path now tries to normalize paths to work better with portals.
+flatpak-spawn now supports --unset-env and --env-fd
+flatpak-spwan now supports --share-pid (if supported by portal)
+xdg-email now passes attachments correctly
+Added tests
+Fixed leaks
+
 Changes in 1.0.4
 ================
 
