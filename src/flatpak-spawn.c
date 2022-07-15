@@ -1297,6 +1297,9 @@ retry:
 
         g_dbus_error_strip_remote_error (error);
         g_printerr ("Portal call failed: %s\n", error->message);
+        if (opt_host) {
+          g_printerr ("Hint: --host only works when the Flatpak is allowed to talk to org.freedesktop.Flatpak\n");
+        }
         return 1;
       }
 
