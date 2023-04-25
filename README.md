@@ -6,7 +6,7 @@ as well as `xdg-open` and `xdg-email`, which are compatible with the
 well-known scripts of the same name.
 
 Everything else in `xdg-utils` is not provided. That includes
-`xdg-settings` and `xdg-mime as they deal with settings that Flatpaks
+`xdg-settings` and `xdg-mime` as they deal with settings that Flatpaks
 do not have access or control to.
 
 See http://flatpak.org/ for more information.
