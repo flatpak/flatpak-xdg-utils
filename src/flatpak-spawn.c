@@ -796,6 +796,8 @@ main (int    argc,
     { "watch-bus", 0, 0, G_OPTION_ARG_NONE, &opt_watch_bus,  "Make the spawned command exit if we do", NULL },
     { "expose-pids", 0, 0, G_OPTION_ARG_NONE, &opt_expose_pids, "Expose sandbox pid in calling sandbox", NULL },
     { "share-pids", 0, 0, G_OPTION_ARG_NONE, &opt_share_pids, "Use same pid namespace as calling sandbox", NULL },
+    // G_OPTION_FLAG_FILENAME is what we use to tell glib to treat the argument as an opaque string rather than try to convert it between locales
+    // see https://gitlab.gnome.org/GNOME/glib/-/blob/68ad8334b6c3ec51f9c3630123a54e9c79ed06a1/glib/goption.c#L1439
     { "env", 0, G_OPTION_FLAG_FILENAME, G_OPTION_ARG_CALLBACK, &opt_env_cb, "Set environment variable", "VAR=VALUE" },
     { "unset-env", 0, G_OPTION_FLAG_FILENAME, G_OPTION_ARG_CALLBACK, &opt_unset_env_cb, "Unset environment variable", "VAR=VALUE" },
     { "env-fd", 0, 0, G_OPTION_ARG_CALLBACK, &option_env_fd_cb, "Read environment variables in env -0 format from FD", "FD" },
