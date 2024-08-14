@@ -370,6 +370,28 @@ sandbox_flag_callback (G_GNUC_UNUSED const gchar *option_name,
   return FALSE;
 }
 
+static GPtrArray *sandbox_a11y_own_names = NULL;
+
+static gboolean
+sandbox_a11y_own_name_callback (G_GNUC_UNUSED const gchar *option_name,
+                                const gchar *value,
+                                G_GNUC_UNUSED gpointer data,
+                                GError **error)
+{
+  if (sandbox_a11y_own_names == NULL)
+    sandbox_a11y_own_names = g_ptr_array_new ();
+
+  if (!g_dbus_is_name (value) || g_dbus_is_unique_name (value))
+    {
+      g_set_error (error, G_OPTION_ERROR, G_OPTION_ERROR_FAILED,
+                   "Invalid bus name");
+      return FALSE;
+    }
+
+  g_ptr_array_add (sandbox_a11y_own_names, g_strdup (value));
+  return TRUE;
+}
+
 static guint32
 get_portal_version (void)
 {
@@ -809,6 +831,7 @@ main (int    argc,
     { "sandbox-expose-path-try", 0, 0, G_OPTION_ARG_FILENAME_ARRAY, &opt_sandbox_expose_path_try, "Expose access to path if it exists", "PATH" },
     { "sandbox-expose-path-ro-try", 0, 0, G_OPTION_ARG_FILENAME_ARRAY, &opt_sandbox_expose_path_ro_try, "Expose readonly access to path if it exists", "PATH" },
     { "sandbox-flag", 0, 0, G_OPTION_ARG_CALLBACK, sandbox_flag_callback, "Enable sandbox flag", "FLAG" },
+    { "sandbox-a11y-own-name", 0, 0, G_OPTION_ARG_CALLBACK, sandbox_a11y_own_name_callback, "Allow owning the name on the a11y bus", "DBUS_NAME" },
     { "host", 0, 0, G_OPTION_ARG_NONE, &opt_host, "Start the command on the host", NULL },
     { "directory", 0, 0, G_OPTION_ARG_FILENAME, &opt_directory, "Working directory in which to run the command", "DIR" },
     { "app-path", 0, 0, G_OPTION_ARG_FILENAME, &opt_app_path, "Replace runtime's /app with DIR or empty", "DIR|\"\"" },
@@ -1165,6 +1188,19 @@ main (int    argc,
 
       g_variant_builder_add (&options_builder, "{s@v}", "sandbox-expose-fd-ro",
                              g_variant_new_variant (g_variant_builder_end (g_steal_pointer (&expose_fd_builder))));
+    }
+
+  if (sandbox_a11y_own_names != NULL)
+    {
+      g_autoptr(GVariantBuilder) sandbox_a11y_own_names_builder = g_variant_builder_new (G_VARIANT_TYPE ("as"));
+
+      check_portal_version ("sandbox-a11y-own-names", 7);
+
+      for (size_t i = 0; i < sandbox_a11y_own_names->len; i++)
+        g_variant_builder_add (sandbox_a11y_own_names_builder, "s", g_ptr_array_index (sandbox_a11y_own_names, i));
+
+      g_variant_builder_add (&options_builder, "{s@v}", "sandbox-a11y-own-names",
+                             g_variant_new_variant (g_variant_builder_end (g_steal_pointer (&sandbox_a11y_own_names_builder))));
     }
 
   if (opt_app_path != NULL)
