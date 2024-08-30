@@ -1,6 +1,12 @@
-Changes in 1.0.5
+Changes in 1.0.6
 ================
 
+flatpak-spawn now supports --sandbox-a11y-own-name (if supported by portal)
+flatpak-spawn prints a useful error when --host isn't permitted
+fixed minor leak in flatpak-spawn
+
+Changes in 1.0.5
+================
 
 flatpak-spawn supports --app-path and --usr-path
 flatpak-spawn --sandbox-expose-path now tries to normalize paths to work better with portals.
