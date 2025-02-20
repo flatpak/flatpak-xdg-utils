@@ -35,11 +35,15 @@
 static char **uris = NULL;
 static gboolean show_help = FALSE;
 static gboolean show_version = FALSE;
+static gboolean ask = FALSE;
 
 static GOptionEntry entries[] = {
   /* Compat options with "real" xdg-open */
   { "manual", 0, G_OPTION_FLAG_HIDDEN, G_OPTION_ARG_NONE, &show_help, NULL, NULL },
   { "version", 0, 0, G_OPTION_ARG_NONE, &show_version, N_("Show program version"), NULL },
+
+  /* Portal-specific options */
+  { "ask", 0, 0, G_OPTION_ARG_NONE, &ask, N_("Ask the user to choose an app"), NULL },
 
   { G_OPTION_REMAINING, 0, 0, G_OPTION_ARG_FILENAME_ARRAY, &uris, NULL, NULL },
   { NULL, 0, 0, 0, NULL, NULL, NULL }
@@ -97,6 +101,7 @@ main (int argc, char *argv[])
     }
 
   g_variant_builder_init (&opt_builder, G_VARIANT_TYPE_VARDICT);
+  g_variant_builder_add (&opt_builder, "{sv}", "ask", g_variant_new_boolean (ask));
 
   file = g_file_new_for_commandline_arg (uris[0]);
   if (g_file_is_native (file))
