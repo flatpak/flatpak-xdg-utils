@@ -704,6 +704,25 @@ opt_unset_env_cb (G_GNUC_UNUSED const char *option_name,
   return TRUE;
 }
 
+static int
+parse_fd_option (const char *value,
+                 GError **error)
+{
+  guint64 fd;
+  gchar *endptr;
+
+  fd = g_ascii_strtoull (value, &endptr, 10);
+
+  if (endptr == NULL || *endptr != '\0' || fd > G_MAXINT)
+    {
+      g_set_error (error, G_OPTION_ERROR, G_OPTION_ERROR_BAD_VALUE,
+                   "Not a valid file descriptor: %s", value);
+      return -1;
+    }
+
+  return (int) fd;
+}
+
 static gboolean
 option_env_fd_cb (G_GNUC_UNUSED const gchar *option_name,
                   const gchar *value,
@@ -714,22 +733,17 @@ option_env_fd_cb (G_GNUC_UNUSED const gchar *option_name,
   g_autofree gchar *env_block = NULL;
   gsize remaining;
   const char *p;
-  guint64 fd;
-  gchar *endptr;
+  int fd;
 
   g_assert (opt_env != NULL);
   g_assert (opt_unsetenv != NULL);
 
-  fd = g_ascii_strtoull (value, &endptr, 10);
+  fd = parse_fd_option (value, error);
 
-  if (endptr == NULL || *endptr != '\0' || fd > G_MAXINT)
-    {
-      g_set_error (error, G_OPTION_ERROR, G_OPTION_ERROR_BAD_VALUE,
-                   "Not a valid file descriptor: %s", value);
-      return FALSE;
-    }
+  if (fd < 0)
+    return FALSE;
 
-  proc_filename = g_strdup_printf ("/proc/self/fd/%d", (int) fd);
+  proc_filename = g_strdup_printf ("/proc/self/fd/%d", fd);
 
   if (!g_file_get_contents (proc_filename, &env_block, &remaining, error))
     return FALSE;
