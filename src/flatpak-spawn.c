@@ -318,6 +318,34 @@ session_bus_closed_cb (G_GNUC_UNUSED GDBusConnection *bus,
 }
 
 static gboolean opt_sandbox_flags = 0;
+static gboolean opt_optional_sandbox_flags = 0;
+
+static guint32
+sandbox_flag_from_string (const gchar *value)
+{
+  if (strcmp (value, "share-display") == 0)
+    return FLATPAK_SPAWN_SANDBOX_FLAGS_SHARE_DISPLAY;
+  else if (strcmp (value, "share-sound") == 0)
+    return FLATPAK_SPAWN_SANDBOX_FLAGS_SHARE_SOUND;
+  else if (strcmp (value, "share-gpu") == 0)
+    return FLATPAK_SPAWN_SANDBOX_FLAGS_SHARE_GPU;
+  else if (strcmp (value, "share-input") == 0)
+    return FLATPAK_SPAWN_SANDBOX_FLAGS_SHARE_INPUT;
+  else if (strcmp (value, "share-usb") == 0)
+    return FLATPAK_SPAWN_SANDBOX_FLAGS_SHARE_USB;
+  else if (strcmp (value, "share-kvm") == 0)
+    return FLATPAK_SPAWN_SANDBOX_FLAGS_SHARE_KVM;
+  else if (strcmp (value, "share-shm") == 0)
+    return FLATPAK_SPAWN_SANDBOX_FLAGS_SHARE_SHM;
+  else if (strcmp (value, "share-devices") == 0)
+    return FLATPAK_SPAWN_SANDBOX_FLAGS_SHARE_DEVICES;
+  else if (strcmp (value, "allow-dbus") == 0)
+    return FLATPAK_SPAWN_SANDBOX_FLAGS_ALLOW_DBUS;
+  else if (strcmp (value, "allow-a11y") == 0)
+    return FLATPAK_SPAWN_SANDBOX_FLAGS_ALLOW_A11Y;
+  else
+    return FLATPAK_SPAWN_SANDBOX_FLAGS_NONE;
+}
 
 static gboolean
 sandbox_flag_callback (G_GNUC_UNUSED const gchar *option_name,
@@ -325,49 +353,20 @@ sandbox_flag_callback (G_GNUC_UNUSED const gchar *option_name,
                        G_GNUC_UNUSED gpointer data,
                        GError **error)
 {
-  long val;
-  char *end;
-
-  if (strcmp (value, "share-display") == 0)
+  guint32 flag = sandbox_flag_from_string (value);
+  if (flag == FLATPAK_SPAWN_SANDBOX_FLAGS_NONE)
     {
-      opt_sandbox_flags |= FLATPAK_SPAWN_SANDBOX_FLAGS_SHARE_DISPLAY;
-      return TRUE;
+      g_set_error (error, G_OPTION_ERROR, G_OPTION_ERROR_FAILED,
+               "Unknown sandbox flag %s", value);      
+      return FALSE;
     }
 
-  if (strcmp (value, "share-sound") == 0)
-    {
-      opt_sandbox_flags |= FLATPAK_SPAWN_SANDBOX_FLAGS_SHARE_SOUND;
-      return TRUE;
-    }
+  opt_sandbox_flags |= flag;
 
-  if (strcmp (value, "share-gpu") == 0)
-    {
-      opt_sandbox_flags |= FLATPAK_SPAWN_SANDBOX_FLAGS_SHARE_GPU;
-      return TRUE;
-    }
+  if (strcmp (option_name, "--sandbox-flag-try") == 0)
+    opt_optional_sandbox_flags |= flag;
 
-  if (strcmp (value, "allow-dbus") == 0)
-    {
-      opt_sandbox_flags |= FLATPAK_SPAWN_SANDBOX_FLAGS_ALLOW_DBUS;
-      return TRUE;
-    }
-
-  if (strcmp (value, "allow-a11y") == 0)
-    {
-      opt_sandbox_flags |= FLATPAK_SPAWN_SANDBOX_FLAGS_ALLOW_A11Y;
-      return TRUE;
-    }
-
-  val = strtol (value, &end, 10);
-  if (val > 0 && *end == 0)
-    {
-      opt_sandbox_flags |= val;
-      return TRUE;
-    }
-
-  g_set_error (error, G_OPTION_ERROR, G_OPTION_ERROR_FAILED,
-               "Unknown sandbox flag %s", value);
-  return FALSE;
+  return TRUE;
 }
 
 static GPtrArray *sandbox_a11y_own_names = NULL;
@@ -434,6 +433,24 @@ check_portal_version (const char *option, guint32 version_needed)
       g_printerr ("--%s not supported by host portal version (need version %d, has %d)\n", option, version_needed, portal_version);
       exit (1);
     }
+}
+
+static void
+check_sandbox_flag_support (const char *option, guint32 version_needed, guint32 flag)
+{
+  if (!(opt_sandbox_flags && flag))
+    return;
+  
+  guint32 portal_version = get_portal_version ();
+  if (portal_version >= version_needed)
+    return;
+
+  g_printerr ("--%s not supported by host portal version (need version %d, has %d)\n", option, version_needed, portal_version);
+
+  if (opt_optional_sandbox_flags && flag)
+    opt_sandbox_flags = opt_sandbox_flags & ~flag;
+  else
+    exit (1);
 }
 
 static guint32
@@ -831,6 +848,7 @@ main (int    argc,
     { "sandbox-expose-path-try", 0, 0, G_OPTION_ARG_FILENAME_ARRAY, &opt_sandbox_expose_path_try, "Expose access to path if it exists", "PATH" },
     { "sandbox-expose-path-ro-try", 0, 0, G_OPTION_ARG_FILENAME_ARRAY, &opt_sandbox_expose_path_ro_try, "Expose readonly access to path if it exists", "PATH" },
     { "sandbox-flag", 0, 0, G_OPTION_ARG_CALLBACK, sandbox_flag_callback, "Enable sandbox flag", "FLAG" },
+    { "sandbox-flag-try", 0, 0, G_OPTION_ARG_CALLBACK, sandbox_flag_callback, "Enable sandbox flag if aviable", "FLAG" },
     { "sandbox-a11y-own-name", 0, 0, G_OPTION_ARG_CALLBACK, sandbox_a11y_own_name_callback, "Allow owning the name on the a11y bus", "DBUS_NAME" },
     { "host", 0, 0, G_OPTION_ARG_NONE, &opt_host, "Start the command on the host", NULL },
     { "directory", 0, 0, G_OPTION_ARG_FILENAME, &opt_directory, "Working directory in which to run the command", "DIR" },
@@ -1145,6 +1163,8 @@ main (int    argc,
         }
 
       check_portal_version ("sandbox-flags", 3);
+
+      check_sandbox_flag_support ("device-flags", 8, FLATPAK_SPAWN_SANDBOX_FLAGS_SHARE_DEVICES);
 
       g_variant_builder_add (&options_builder, "{s@v}", "sandbox-flags",
                              g_variant_new_variant (g_variant_new_uint32 (opt_sandbox_flags)));
