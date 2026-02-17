@@ -721,6 +721,25 @@ opt_unset_env_cb (G_GNUC_UNUSED const char *option_name,
   return TRUE;
 }
 
+static int
+parse_fd_option (const char *value,
+                 GError **error)
+{
+  guint64 fd;
+  gchar *endptr;
+
+  fd = g_ascii_strtoull (value, &endptr, 10);
+
+  if (endptr == NULL || *endptr != '\0' || fd > G_MAXINT)
+    {
+      g_set_error (error, G_OPTION_ERROR, G_OPTION_ERROR_BAD_VALUE,
+                   "Not a valid file descriptor: %s", value);
+      return -1;
+    }
+
+  return (int) fd;
+}
+
 static gboolean
 option_env_fd_cb (G_GNUC_UNUSED const gchar *option_name,
                   const gchar *value,
@@ -731,22 +750,17 @@ option_env_fd_cb (G_GNUC_UNUSED const gchar *option_name,
   g_autofree gchar *env_block = NULL;
   gsize remaining;
   const char *p;
-  guint64 fd;
-  gchar *endptr;
+  int fd;
 
   g_assert (opt_env != NULL);
   g_assert (opt_unsetenv != NULL);
 
-  fd = g_ascii_strtoull (value, &endptr, 10);
+  fd = parse_fd_option (value, error);
 
-  if (endptr == NULL || *endptr != '\0' || fd > G_MAXINT)
-    {
-      g_set_error (error, G_OPTION_ERROR, G_OPTION_ERROR_BAD_VALUE,
-                   "Not a valid file descriptor: %s", value);
-      return FALSE;
-    }
+  if (fd < 0)
+    return FALSE;
 
-  proc_filename = g_strdup_printf ("/proc/self/fd/%d", (int) fd);
+  proc_filename = g_strdup_printf ("/proc/self/fd/%d", fd);
 
   if (!g_file_get_contents (proc_filename, &env_block, &remaining, error))
     return FALSE;
@@ -796,6 +810,44 @@ option_env_fd_cb (G_GNUC_UNUSED const gchar *option_name,
   return TRUE;
 }
 
+static GArray *opt_forward_fds = NULL;
+
+static gboolean
+opt_forward_fd_cb (const gchar *option_name,
+                   const gchar *value,
+                   G_GNUC_UNUSED gpointer data,
+                   GError **error)
+{
+  int fd;
+  int flags;
+
+  g_assert (opt_forward_fds != NULL);
+
+  fd = parse_fd_option (value, error);
+
+  if (fd < 0)
+    return FALSE;
+
+  if (fd <= 2)
+    {
+      g_debug ("Ignoring %s=%d, fds 0-2 are always forwarded",
+               option_name, fd);
+      return TRUE;
+    }
+
+  flags = fcntl (fd, F_GETFD, 0);
+
+  if (flags == -1)
+    {
+      g_set_error (error, G_OPTION_ERROR, G_OPTION_ERROR_BAD_VALUE,
+                   "%s=%d: %s", option_name, fd, g_strerror (errno));
+      return FALSE;
+    }
+
+  g_array_append_val (opt_forward_fds, fd);
+  return TRUE;
+}
+
 int
 main (int    argc,
       char **argv)
@@ -805,8 +857,8 @@ main (int    argc,
   GOptionContext *context;
   g_autoptr(GPtrArray) child_argv = NULL;
   int i, opt_argc;
+  gsize n;
   gboolean verbose = FALSE;
-  char **forward_fds = NULL;
   guint spawn_flags;
   gboolean opt_clear_env = FALSE;
   gboolean opt_watch_bus = FALSE;
@@ -830,7 +882,7 @@ main (int    argc,
   GVariantBuilder options_builder;
   const GOptionEntry options[] = {
     { "verbose", 'v', 0, G_OPTION_ARG_NONE, &verbose,  "Enable debug output", NULL },
-    { "forward-fd", 0, 0, G_OPTION_ARG_STRING_ARRAY, &forward_fds,  "Forward file descriptor", "FD" },
+    { "forward-fd", 0, 0, G_OPTION_ARG_CALLBACK, &opt_forward_fd_cb,  "Forward file descriptor", "FD" },
     { "clear-env", 0, 0, G_OPTION_ARG_NONE, &opt_clear_env,  "Run with clean environment", NULL },
     { "watch-bus", 0, 0, G_OPTION_ARG_NONE, &opt_watch_bus,  "Make the spawned command exit if we do", NULL },
     { "expose-pids", 0, 0, G_OPTION_ARG_NONE, &opt_expose_pids, "Expose sandbox pid in calling sandbox", NULL },
@@ -875,6 +927,7 @@ main (int    argc,
     i++;
 
   opt_argc = i;
+  opt_forward_fds = g_array_new (FALSE, FALSE, sizeof (int));
   opt_env = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_free);
   opt_unsetenv = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
 
@@ -981,19 +1034,12 @@ main (int    argc,
   g_variant_builder_add (fd_builder, "{uh}", 2, stderr_handle);
   g_autoptr(GVariant) reply = NULL;
 
-  for (i = 0; forward_fds != NULL && forward_fds[i] != NULL; i++)
+  for (n = 0; n < opt_forward_fds->len; n++)
     {
-      int fd = strtol (forward_fds[i],  NULL, 10);
+      int fd = g_array_index (opt_forward_fds, int, n);
       gint handle = -1;
 
-      if (fd == 0)
-        {
-          g_printerr ("Invalid fd '%s'\n", forward_fds[i]);
-          return 1;
-        }
-
-      if (fd >= 0 && fd <= 2)
-        continue; // We always forward these
+      g_assert (fd > 2);
 
       handle = g_unix_fd_list_append (fd_list, fd, &error);
       if (handle == -1)
@@ -1005,6 +1051,8 @@ main (int    argc,
       close (fd);
       g_variant_builder_add (fd_builder, "{uh}", fd, handle);
     }
+
+  g_clear_pointer (&opt_forward_fds, g_array_unref);
 
   g_hash_table_iter_init (&iter, opt_env);
 
