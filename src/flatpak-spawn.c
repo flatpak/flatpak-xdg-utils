@@ -986,7 +986,7 @@ main (int    argc,
       int fd = strtol (forward_fds[i],  NULL, 10);
       gint handle = -1;
 
-      if (fd == 0)
+      if (fd < 0)
         {
           g_printerr ("Invalid fd '%s'\n", forward_fds[i]);
           return 1;
