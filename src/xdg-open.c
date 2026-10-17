@@ -58,6 +58,7 @@ main (int argc, char *argv[])
   g_autoptr(GFile) file = NULL;
   g_autoptr(GVariant) reply = NULL;
   GVariantBuilder opt_builder;
+  const gchar *activation_token;
 
   context = g_option_context_new ("{ file | URL }");
 
@@ -101,6 +102,11 @@ main (int argc, char *argv[])
     }
 
   g_variant_builder_init (&opt_builder, G_VARIANT_TYPE_VARDICT);
+  activation_token = g_getenv ("XDG_ACTIVATION_TOKEN");
+  if (activation_token != NULL && activation_token[0] != '\0' &&
+      g_utf8_validate (activation_token, -1, NULL))
+    g_variant_builder_add (&opt_builder, "{sv}", "activation_token",
+                           g_variant_new_string (activation_token));
   g_variant_builder_add (&opt_builder, "{sv}", "ask", g_variant_new_boolean (ask));
 
   file = g_file_new_for_commandline_arg (uris[0]);

@@ -44,7 +44,7 @@ typedef struct
 
 typedef struct
 {
-  int dummy;
+  const gchar *activation_token;
 } Config;
 
 static void
@@ -245,12 +245,15 @@ test_help (Fixture *f,
 
 static void
 test_uri (Fixture *f,
-          gconstpointer context G_GNUC_UNUSED)
+          gconstpointer context)
 {
+  const Config *config = context;
   g_autoptr(GSubprocessLauncher) launcher = NULL;
   g_autoptr(GError) error = NULL;
   g_autoptr(GDBusMethodInvocation) invocation = NULL;
   GVariant *parameters;
+  g_autoptr(GVariant) options = NULL;
+  const gchar *activation_token = NULL;
   const gchar *window;
   const gchar *uri;
 
@@ -259,6 +262,11 @@ test_uri (Fixture *f,
                                 "DBUS_SESSION_BUS_ADDRESS",
                                 f->dbus_address,
                                 TRUE);
+  if (config->activation_token != NULL)
+    g_subprocess_launcher_setenv (launcher, "XDG_ACTIVATION_TOKEN",
+                                  config->activation_token, TRUE);
+  else
+    g_subprocess_launcher_unsetenv (launcher, "XDG_ACTIVATION_TOKEN");
 
   f->xdg_open = g_subprocess_launcher_spawn (launcher, &error,
                                              f->xdg_open_path,
@@ -285,18 +293,33 @@ test_uri (Fixture *f,
   g_assert_cmpstr (g_variant_get_type_string (parameters), ==, "(ssa{sv})");
   g_variant_get (parameters, "(&s&sa{sv})",
                  &window, &uri, NULL);
+  options = g_variant_get_child_value (parameters, 2);
+  if (config->activation_token != NULL && config->activation_token[0] != '\0' &&
+      g_utf8_validate (config->activation_token, -1, NULL))
+    {
+      g_assert_true (g_variant_lookup (options, "activation_token", "&s",
+                                       &activation_token));
+      g_assert_cmpstr (activation_token, ==, config->activation_token);
+    }
+  else
+    g_assert_false (g_variant_lookup (options, "activation_token", "&s",
+                                      &activation_token));
+
   g_assert_cmpstr (window, ==, "");
   g_assert_cmpstr (uri, ==, "http://example.com/");
 }
 
 static void
 test_file (Fixture *f,
-           gconstpointer context G_GNUC_UNUSED)
+           gconstpointer context)
 {
+  const Config *config = context;
   g_autoptr(GSubprocessLauncher) launcher = NULL;
   g_autoptr(GError) error = NULL;
   g_autoptr(GDBusMethodInvocation) invocation = NULL;
   GVariant *parameters;
+  g_autoptr(GVariant) options = NULL;
+  const gchar *activation_token = NULL;
   const gchar *window;
   gint32 handle;
   GDBusMessage *message;
@@ -312,6 +335,11 @@ test_file (Fixture *f,
                                 "DBUS_SESSION_BUS_ADDRESS",
                                 f->dbus_address,
                                 TRUE);
+  if (config->activation_token != NULL)
+    g_subprocess_launcher_setenv (launcher, "XDG_ACTIVATION_TOKEN",
+                                  config->activation_token, TRUE);
+  else
+    g_subprocess_launcher_unsetenv (launcher, "XDG_ACTIVATION_TOKEN");
 
   f->xdg_open = g_subprocess_launcher_spawn (launcher, &error,
                                              f->xdg_open_path,
@@ -338,6 +366,18 @@ test_file (Fixture *f,
   g_assert_cmpstr (g_variant_get_type_string (parameters), ==, "(sha{sv})");
   g_variant_get (parameters, "(&sha{sv})",
                  &window, &handle, NULL);
+  options = g_variant_get_child_value (parameters, 2);
+  if (config->activation_token != NULL && config->activation_token[0] != '\0' &&
+      g_utf8_validate (config->activation_token, -1, NULL))
+    {
+      g_assert_true (g_variant_lookup (options, "activation_token", "&s",
+                                       &activation_token));
+      g_assert_cmpstr (activation_token, ==, config->activation_token);
+    }
+  else
+    g_assert_false (g_variant_lookup (options, "activation_token", "&s",
+                                      &activation_token));
+
   g_assert_cmpstr (window, ==, "");
   g_assert_cmpint (handle, ==, 0);
 
@@ -390,11 +430,22 @@ int
 main (int argc,
       char **argv)
 {
+  static const Config no_token = { NULL };
+  static const Config empty_token = { "" };
+  static const Config with_token = { "opaque-token-\"quoted\"-\303\251" };
+  static const Config invalid_token = { "\377\376" };
+
   g_test_init (&argc, &argv, NULL);
 
   g_test_add ("/help", Fixture, NULL, setup, test_help, teardown);
-  g_test_add ("/uri", Fixture, NULL, setup, test_uri, teardown);
-  g_test_add ("/file", Fixture, NULL, setup, test_file, teardown);
+  g_test_add ("/uri/no-token", Fixture, &no_token, setup, test_uri, teardown);
+  g_test_add ("/uri/empty-token", Fixture, &empty_token, setup, test_uri, teardown);
+  g_test_add ("/uri/activation-token", Fixture, &with_token, setup, test_uri, teardown);
+  g_test_add ("/uri/invalid-token", Fixture, &invalid_token, setup, test_uri, teardown);
+  g_test_add ("/file/no-token", Fixture, &no_token, setup, test_file, teardown);
+  g_test_add ("/file/empty-token", Fixture, &empty_token, setup, test_file, teardown);
+  g_test_add ("/file/activation-token", Fixture, &with_token, setup, test_file, teardown);
+  g_test_add ("/file/invalid-token", Fixture, &invalid_token, setup, test_file, teardown);
 
   return g_test_run ();
 }
