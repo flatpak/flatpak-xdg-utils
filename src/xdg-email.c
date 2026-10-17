@@ -84,6 +84,7 @@ main (int argc, char *argv[])
   g_autoptr(GPtrArray) bcc = NULL;
   gsize i;
   const char *single_uri = NULL;
+  const char *activation_token;
 
   context = g_option_context_new ("[ mailto-uri | address(es) ]");
 
@@ -264,6 +265,11 @@ main (int argc, char *argv[])
     }
 
   g_variant_builder_init (&opt_builder, G_VARIANT_TYPE_VARDICT);
+  activation_token = g_getenv ("XDG_ACTIVATION_TOKEN");
+  if (activation_token != NULL && activation_token[0] != '\0' &&
+      g_utf8_validate (activation_token, -1, NULL))
+    g_variant_builder_add (&opt_builder, "{sv}", "activation_token",
+                           g_variant_new_string (activation_token));
 
   if (single_uri != NULL)
     {

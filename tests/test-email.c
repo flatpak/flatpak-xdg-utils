@@ -35,6 +35,7 @@
 typedef struct
 {
   guint32 iface_version;
+  const gchar *activation_token;
 } Config;
 
 typedef struct
@@ -313,6 +314,36 @@ setup (Fixture *f,
 }
 
 static void
+set_activation_token (Fixture *f,
+                      GSubprocessLauncher *launcher)
+{
+  if (f->config->activation_token != NULL)
+    g_subprocess_launcher_setenv (launcher, "XDG_ACTIVATION_TOKEN",
+                                  f->config->activation_token, TRUE);
+  else
+    g_subprocess_launcher_unsetenv (launcher, "XDG_ACTIVATION_TOKEN");
+}
+
+static void
+assert_activation_token (Fixture *f,
+                         GVariant *options)
+{
+  const gchar *activation_token = NULL;
+
+  if (f->config->activation_token != NULL &&
+      f->config->activation_token[0] != '\0' &&
+      g_utf8_validate (f->config->activation_token, -1, NULL))
+    {
+      g_assert_true (g_variant_lookup (options, "activation_token", "&s",
+                                       &activation_token));
+      g_assert_cmpstr (activation_token, ==, f->config->activation_token);
+    }
+  else
+    g_assert_false (g_variant_lookup (options, "activation_token", "&s",
+                                      &activation_token));
+}
+
+static void
 test_help (Fixture *f,
            gconstpointer context G_GNUC_UNUSED)
 {
@@ -365,6 +396,7 @@ test_minimal (Fixture *f,
                                 "DBUS_SESSION_BUS_ADDRESS",
                                 f->dbus_address,
                                 TRUE);
+  set_activation_token (f, launcher);
 
   f->xdg_email = g_subprocess_launcher_spawn (launcher, &error,
                                              f->xdg_email_path,
@@ -394,6 +426,7 @@ test_minimal (Fixture *f,
   g_assert_cmpstr (window, ==, "");
 
   dict = g_variant_dict_new (asv);
+  assert_activation_token (f, asv);
 
   if (f->config->iface_version >= 3)
     {
@@ -558,6 +591,7 @@ test_mailto_single (Fixture *f,
                                 "DBUS_SESSION_BUS_ADDRESS",
                                 f->dbus_address,
                                 TRUE);
+  set_activation_token (f, launcher);
 
   f->xdg_email = g_subprocess_launcher_spawn (launcher, &error,
                                               f->xdg_email_path,
@@ -590,6 +624,7 @@ test_mailto_single (Fixture *f,
                  &window, &uri, &asv);
   g_assert_cmpstr (window, ==, "");
   g_assert_cmpstr (uri, ==, "MailTo:?you-are-not-expected-to-understand-this");
+  assert_activation_token (f, asv);
 }
 
 static void
@@ -923,6 +958,24 @@ static const Config v3 =
   .iface_version = 3,
 };
 
+static const Config v3_token =
+{
+  .iface_version = 3,
+  .activation_token = "opaque-token-\"quoted\"-\303\251",
+};
+
+static const Config v3_empty_token =
+{
+  .iface_version = 3,
+  .activation_token = "",
+};
+
+static const Config v3_invalid_token =
+{
+  .iface_version = 3,
+  .activation_token = "\377\376",
+};
+
 int
 main (int argc,
       char **argv)
@@ -941,6 +994,10 @@ main (int argc,
   g_test_add ("/mailto/multiple", Fixture, &v3, setup, test_mailto_multiple, teardown);
   g_test_add ("/mailto/complex", Fixture, &v3, setup, test_mailto_complex, teardown);
   g_test_add ("/mailto/combined", Fixture, &v3, setup, test_mailto_combined, teardown);
+  g_test_add ("/activation-token/compose", Fixture, &v3_token, setup, test_minimal, teardown);
+  g_test_add ("/activation-token/compose-empty", Fixture, &v3_empty_token, setup, test_minimal, teardown);
+  g_test_add ("/activation-token/compose-invalid", Fixture, &v3_invalid_token, setup, test_minimal, teardown);
+  g_test_add ("/activation-token/mailto", Fixture, &v3_token, setup, test_mailto_single, teardown);
 
   return g_test_run ();
 }
