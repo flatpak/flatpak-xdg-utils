@@ -17,3 +17,4 @@ po/*.sin
 po/Makefile.in.in
 po/Makevars.template
 po/Rules-quot
+target/

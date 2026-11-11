@@ -1,0 +1,31 @@
+[package]
+name = "flatpak-xdg-utils"
+version = "0.1.0"
+edition = "2021"
+license = "LGPL-2.1"
+description = "Simple portal-based commandline tools for use inside flatpak sandboxes"
+authors = ["Yves Auxier <yvesauxier@gmail.com>", "Ryan Gonzalez <git@refi64.dev>"]
+
+[[bin]]
+name = "xdg-open"
+description = "Opens a file or URL in the user's preferred application"
+path = "src/xdg-open.rs"
+
+[[bin]]
+name = "xdg-email"
+description = "Command line tool for sending mail using the user's preferred e-mail composer"
+path = "src/xdg-email.rs"
+
+[dependencies]
+ashpd = "0.4.0"
+async-std = {"version" = "1.12.0", features=["attributes"]}
+clap = { version = "4.3.4", features = ["derive"] }
+url = "2.4.0"
+
+# for size
+[profile.release]
+strip = true
+opt-level = "z"
+lto = true
+codegen-units = 1
+
