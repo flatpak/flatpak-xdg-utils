@@ -13,11 +13,10 @@ See https://flatpak.org/ for more information.
 
 # Installation 
 
-This repository uses meson to build. Just do
+This repository uses cargo and meson to build. Just do
 ```
+ TODO
  meson [args] build
  ninja -Cbuild
  ninja -Cbuild install
 ```
-
-The tools in flatpak-xdg-utils are only useful inside a Flatpak sandbox.
